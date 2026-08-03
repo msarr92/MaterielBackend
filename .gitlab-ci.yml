@@ -24,22 +24,65 @@ default:
 
 
 # ============================================================
+# CONFIGURATION PHP COMMUNE
+# ============================================================
+
+.php_setup:
+  before_script:
+    - apk add --no-cache
+        git
+        unzip
+        curl
+        libzip-dev
+        libpng-dev
+        libjpeg-turbo-dev
+        freetype-dev
+        oniguruma-dev
+        icu-dev
+        sqlite-dev
+        libxml2-dev
+
+    - docker-php-ext-configure gd --with-freetype --with-jpeg
+
+    - docker-php-ext-install -j$(nproc)
+        gd
+        mbstring
+        zip
+        intl
+        pdo_mysql
+        pdo_sqlite
+        dom
+
+    - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
+
+    - php composer-setup.php
+        --install-dir=/usr/local/bin
+        --filename=composer
+
+    - php -r "unlink('composer-setup.php');"
+
+    - php --version
+    - composer --version
+    - php -m | grep -i gd
+    - php -m | grep -i dom
+    - php -m | grep -i session
+    - composer check-platform-reqs --no-dev || true
+
+
+# ============================================================
 # 1. INSTALLATION DES DÉPENDANCES
 # ============================================================
 
 install_dependencies:
+  extends: .php_setup
   stage: install
 
-  before_script:
-    - apk add --no-cache git unzip composer libzip-dev libpng-dev libjpeg-turbo-dev freetype-dev oniguruma-dev icu-dev sqlite-dev
-    - docker-php-ext-configure gd --with-freetype --with-jpeg
-    - docker-php-ext-install gd mbstring zip intl pdo_mysql pdo_sqlite
-    - php --version
-    - composer --version
-    - php -m | grep -i gd
-
   script:
-    - composer install --no-interaction --prefer-dist --no-progress --optimize-autoloader
+    - composer install
+        --no-interaction
+        --prefer-dist
+        --no-progress
+        --optimize-autoloader
 
   artifacts:
     expire_in: 1 hour
@@ -48,10 +91,11 @@ install_dependencies:
 
 
 # ============================================================
-# 2. VÉRIFICATION DU PROJET
+# 2. QUALITÉ ET VALIDATION DU PROJET
 # ============================================================
 
 code_quality:
+  extends: .php_setup
   stage: quality
 
   needs:
@@ -59,15 +103,15 @@ code_quality:
       artifacts: true
 
   before_script:
-    - apk add --no-cache libzip libpng libjpeg-turbo freetype oniguruma icu-libs sqlite
+    - !reference [.php_setup, before_script]
     - cp .env.example .env
     - php artisan key:generate
 
   script:
+    - composer validate --no-check-publish
     - php artisan --version
     - php artisan config:clear
     - php artisan route:list
-    - composer validate --no-check-publish
 
 
 # ============================================================
@@ -75,6 +119,7 @@ code_quality:
 # ============================================================
 
 tests:
+  extends: .php_setup
   stage: test
 
   needs:
@@ -90,7 +135,7 @@ tests:
     MAIL_MAILER: "array"
 
   before_script:
-    - apk add --no-cache libzip libpng libjpeg-turbo freetype oniguruma icu-libs sqlite
+    - !reference [.php_setup, before_script]
     - cp .env.example .env
     - php artisan key:generate
     - mkdir -p database
@@ -113,14 +158,12 @@ tests:
 # ============================================================
 
 composer_audit:
+  extends: .php_setup
   stage: security
 
   needs:
     - job: install_dependencies
       artifacts: true
-
-  before_script:
-    - apk add --no-cache composer
 
   script:
     - composer audit || true
@@ -129,7 +172,7 @@ composer_audit:
 
 
 # ============================================================
-# 5. SÉCURITÉ GITLAB
+# 5. OUTILS DE SÉCURITÉ GITLAB
 # ============================================================
 
 include:
