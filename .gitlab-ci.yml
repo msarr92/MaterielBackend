@@ -144,24 +144,30 @@ tests:
     DB_USERNAME: "materiel"
     DB_PASSWORD: "materiel"
 
+    APP_ENV: "testing"
+    APP_DEBUG: "true"
+
     CACHE_STORE: "array"
     CACHE_DRIVER: "array"
     SESSION_DRIVER: "array"
     QUEUE_CONNECTION: "sync"
     MAIL_MAILER: "array"
 
+    JWT_SECRET: "gitlab-ci-jwt-secret-key-for-automated-tests-2026"
+    JWT_ALGO: "HS256"
+    JWT_TTL: "60"
+
   before_script:
     - !reference [.php_setup, before_script]
 
-    - apk add --no-cache postgresql-client postgresql-dev
-
-    - docker-php-ext-install pdo_pgsql
+    - apk add --no-cache postgresql-client
 
     - cp .env.example .env
 
     - php artisan key:generate
 
     - php artisan config:clear
+    - php artisan cache:clear
 
     - |
       echo "Attente du démarrage de PostgreSQL..."
@@ -197,7 +203,6 @@ tests:
     expire_in: 1 week
     paths:
       - storage/logs/
-
 # ============================================================
 # 4. AUDIT COMPOSER
 # ============================================================
