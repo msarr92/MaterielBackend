@@ -1,4 +1,4 @@
-image: php:8.2-cli-alpine
+image: php:8.4-cli-alpine
 
 stages:
   - install
@@ -18,8 +18,10 @@ default:
     key:
       files:
         - composer.lock
+
     paths:
       - .composer-cache/
+
     policy: pull-push
 
 
@@ -44,7 +46,9 @@ default:
 
     - docker-php-ext-configure gd --with-freetype --with-jpeg
 
-    - docker-php-ext-install -j$(nproc)
+    # Ne pas utiliser -j$(nproc), car cela provoquait
+    # des conflits "mkdir .libs: File exists".
+    - docker-php-ext-install
         gd
         mbstring
         zip
@@ -53,6 +57,7 @@ default:
         pdo_sqlite
         dom
 
+    # Installation de Composer avec le PHP de l'image Docker
     - php -r "copy('https://getcomposer.org/installer', 'composer-setup.php');"
 
     - php composer-setup.php
@@ -61,12 +66,15 @@ default:
 
     - php -r "unlink('composer-setup.php');"
 
+    # Vérifications
     - php --version
     - composer --version
     - php -m | grep -i gd
     - php -m | grep -i dom
     - php -m | grep -i session
-    - composer check-platform-reqs --no-dev || true
+    - php -m | grep -i fileinfo
+    - php -m | grep -i tokenizer
+    - php -m | grep -i sodium
 
 
 # ============================================================
@@ -84,14 +92,17 @@ install_dependencies:
         --no-progress
         --optimize-autoloader
 
+    - composer check-platform-reqs
+
   artifacts:
     expire_in: 1 hour
+
     paths:
       - vendor/
 
 
 # ============================================================
-# 2. QUALITÉ ET VALIDATION DU PROJET
+# 2. VALIDATION ET QUALITÉ
 # ============================================================
 
 code_quality:
@@ -130,6 +141,7 @@ tests:
     DB_CONNECTION: "sqlite"
     DB_DATABASE: "$CI_PROJECT_DIR/database/database.sqlite"
     CACHE_STORE: "array"
+    CACHE_DRIVER: "array"
     SESSION_DRIVER: "array"
     QUEUE_CONNECTION: "sync"
     MAIL_MAILER: "array"
@@ -137,9 +149,9 @@ tests:
   before_script:
     - !reference [.php_setup, before_script]
     - cp .env.example .env
-    - php artisan key:generate
     - mkdir -p database
     - touch database/database.sqlite
+    - php artisan key:generate
     - php artisan config:clear
     - php artisan cache:clear
 
@@ -149,12 +161,13 @@ tests:
   artifacts:
     when: always
     expire_in: 1 week
+
     paths:
       - storage/logs/
 
 
 # ============================================================
-# 4. AUDIT DE SÉCURITÉ COMPOSER
+# 4. AUDIT COMPOSER
 # ============================================================
 
 composer_audit:
@@ -172,7 +185,7 @@ composer_audit:
 
 
 # ============================================================
-# 5. OUTILS DE SÉCURITÉ GITLAB
+# 5. SÉCURITÉ GITLAB
 # ============================================================
 
 include:
