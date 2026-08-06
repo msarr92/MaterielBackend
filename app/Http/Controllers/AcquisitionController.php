@@ -105,489 +105,546 @@ class AcquisitionController extends Controller
     }
 
     public function listAcquisitions(Request $request)
-    {
-        try {
+{
+    try {
 
-            $validator = Validator::make($request->all(), [
+        $validator = Validator::make($request->all(), [
 
-                'search' => 'nullable|string|max:100',
+            'search' => 'nullable|string|max:100',
 
-                'per_page' => 'nullable|integer|min:1|max:100',
+            'per_page' => 'nullable|integer|min:1|max:100',
 
-            ]);
+        ]);
 
-            if ($validator->fails()) {
 
-                return response()->json([
-
-                    'success' => false,
-
-                    'message' => $validator->errors()->first(),
-
-                ], 422);
-
-            }
-
-            $search = trim($request->search ?? '');
-
-            $perPage = $request->per_page ?? 10;
-
-            /*
-            |--------------------------------------------------------------------------
-            | Regroupement acquisition
-            |--------------------------------------------------------------------------
-            */
-
-            $query = Acquisition::select(
-
-                DB::raw('MIN(id) as id'),
-
-                'type_acquisition',
-
-                'numero_reference',
-
-                'date_acquisition',
-
-                'fournisseur_nom',
-
-                DB::raw(
-                    'MAX(fournisseur_contact) as fournisseur_contact'
-                ),
-
-                DB::raw(
-                    'MAX(fournisseur_adresse) as fournisseur_adresse'
-                ),
-
-                DB::raw(
-                    'SUM(montant) as montant'
-                ),
-
-                DB::raw(
-                    'SUM(quantite_prevue) as quantite_prevue'
-                ),
-
-                DB::raw(
-                    'MAX(observation) as observation'
-                )
-
-            )
-                ->groupBy(
-
-                    'type_acquisition',
-
-                    'numero_reference',
-
-                    'date_acquisition',
-
-                    'fournisseur_nom'
-
-                )
-                ->orderByDesc(DB::raw('MIN(id)'));
-
-            /*
-            |--------------------------------------------------------------------------
-            | Recherche
-            |--------------------------------------------------------------------------
-            */
-
-            if (! empty($search)) {
-
-                $query->havingRaw("
-
-                LOWER(COALESCE(numero_reference,'')) LIKE ?
-
-                OR LOWER(COALESCE(fournisseur_nom,'')) LIKE ?
-
-                OR LOWER(COALESCE(type_acquisition,'')) LIKE ?
-
-            ", [
-
-                    '%'.strtolower($search).'%',
-                    '%'.strtolower($search).'%',
-                    '%'.strtolower($search).'%',
-
-                ]);
-
-            }
-
-            $acquisitions = $query->paginate($perPage);
-
-            $data = collect($acquisitions->items())
-                ->map(function ($item) {
-
-                    /*
-            |--------------------------------------------------------------------------
-            | Récupération des acquisitions liées
-            |--------------------------------------------------------------------------
-            */
-
-                    $ids = Acquisition::where(
-
-                        'numero_reference',
-                        $item->numero_reference
-
-                    )
-                        ->where(
-
-                            'type_acquisition',
-                            $item->type_acquisition
-
-                        )
-                        ->whereDate(
-
-                            'date_acquisition',
-                            $item->date_acquisition
-
-                        )
-                        ->where(
-
-                            'fournisseur_nom',
-                            $item->fournisseur_nom
-
-                        )
-                        ->pluck('id');
-
-                    /*
-            |--------------------------------------------------------------------------
-            | Quantité enregistrée
-            |--------------------------------------------------------------------------
-            */
-
-                    $materiels = Materiel::whereIn(
-
-                        'acquisition_id',
-                        $ids
-
-                    )->get();
-
-                    $quantiteEnregistree =
-                        $materiels->sum('quantite');
-
-                    /*
-            |--------------------------------------------------------------------------
-            | Brouillons
-            |--------------------------------------------------------------------------
-            */
-
-                    $nombreBrouillons =
-                        $materiels
-                            ->where(
-                                'statut_enregistrement',
-                                'BROUILLON'
-                            )
-                            ->count();
-
-                    $quantiteBrouillon =
-                        $materiels
-                            ->where(
-                                'statut_enregistrement',
-                                'BROUILLON'
-                            )
-                            ->sum('quantite');
-
-                    /*
-            |--------------------------------------------------------------------------
-            | Progression
-            |--------------------------------------------------------------------------
-            */
-
-                    $quantitePrevue =
-                        $item->quantite_prevue ?? 0;
-
-                    $reste = max(
-
-                        0,
-
-                        $quantitePrevue
-                        -
-                        $quantiteEnregistree
-
-                    );
-
-                    $progression =
-                        $quantitePrevue > 0
-
-                        ?
-
-                        round(
-
-                            (
-                                $quantiteEnregistree
-                                /
-                                $quantitePrevue
-
-                            ) * 100,
-
-                            2
-
-                        )
-
-                        :
-
-                        0;
-
-                    /*
-            |--------------------------------------------------------------------------
-            | Statut final
-            |--------------------------------------------------------------------------
-            */
-
-                    if ($nombreBrouillons > 0) {
-
-                        $statut = 'A_COMPLETER';
-
-                    } elseif ($reste > 0) {
-
-                        $statut = 'EN_COURS';
-
-                    } else {
-
-                        $statut = 'TERMINEE';
-
-                    }
-
-                    return [
-
-                        'id' => $item->id,
-
-                        'type_acquisition' => $item->type_acquisition,
-
-                        'numero_reference' => $item->numero_reference,
-
-                        'date_acquisition' => $item->date_acquisition,
-
-                        'fournisseur_nom' => $item->fournisseur_nom,
-
-                        'montant' => $item->montant,
-
-                        /*
-                    | Gestion saisie
-                    */
-
-                        'quantite_prevue' => $quantitePrevue,
-
-                        'quantite_enregistree' => $quantiteEnregistree,
-
-                        'reste_a_saisir' => $reste,
-
-                        'progression' => $progression,
-
-                        /*
-                    | Brouillons
-                    */
-
-                        'nombre_brouillons' => $nombreBrouillons,
-
-                        'quantite_brouillon' => $quantiteBrouillon,
-
-                        'statut' => $statut,
-
-                    ];
-
-                });
+        if ($validator->fails()) {
 
             return response()->json([
 
-                'success' => true,
+                'success'=>false,
 
-                'message' => 'Liste des acquisitions récupérée avec succès.',
+                'message'=>$validator->errors()->first()
 
-                'data' => $data,
-
-                'pagination' => [
-
-                    'current_page' => $acquisitions->currentPage(),
-
-                    'last_page' => $acquisitions->lastPage(),
-
-                    'per_page' => $acquisitions->perPage(),
-
-                    'total' => $acquisitions->total(),
-
-                ],
-
-            ]);
-
-        } catch (\Throwable $e) {
-
-            return response()->json([
-
-                'success' => false,
-
-                'message' => 'Erreur lors du chargement des acquisitions.',
-
-                'error' => $e->getMessage(),
-
-            ], 500);
+            ],422);
 
         }
-    }
 
-    public function detailAcquisition($id)
-    {
-        try {
 
-            $acquisition = Acquisition::find($id);
+        $search = trim($request->search ?? '');
 
-            if (! $acquisition) {
+        $perPage = $request->per_page ?? 10;
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Acquisition introuvable.',
-                ], 404);
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Chargement acquisitions
+        |--------------------------------------------------------------------------
+        */
+
+        $query = Acquisition::query()
+            ->withCount('materiels')
+            ->withSum('materiels','quantite');
+
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Recherche
+        |--------------------------------------------------------------------------
+        */
+
+        if($search){
+
+            $query->where(function($q) use ($search){
+
+                $q->where(
+                    'numero_reference',
+                    'ILIKE',
+                    "%{$search}%"
+                )
+
+                ->orWhere(
+                    'fournisseur_nom',
+                    'ILIKE',
+                    "%{$search}%"
+                )
+
+                ->orWhere(
+                    'type_acquisition',
+                    'ILIKE',
+                    "%{$search}%"
+                );
+
+            });
+
+        }
+
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Récupération
+        |--------------------------------------------------------------------------
+        */
+
+        $acquisitions = $query
+            ->orderByDesc('id')
+            ->get();
+
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Regroupement Laravel
+        |--------------------------------------------------------------------------
+        */
+
+        $groupes = $acquisitions->groupBy(function($item){
+
+            return
+
+                $item->type_acquisition.'|'.
+                $item->numero_reference.'|'.
+                $item->date_acquisition.'|'.
+                $item->fournisseur_nom;
+
+        });
+
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | Pagination manuelle
+        |--------------------------------------------------------------------------
+        */
+
+        $page = request('page',1);
+
+
+        $collection = $groupes
+            ->slice(
+                ($page-1)*$perPage,
+                $perPage
+            );
+
+
+
+        $data = $collection->map(function($items){
+
+
+            $premier = $items->first();
+
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Tous les IDs du groupe
+            |--------------------------------------------------------------------------
+            */
+
+            $ids = $items->pluck('id');
+
+
+
+            /*
+            |--------------------------------------------------------------------------
+            | Matériels enregistrés
+            |--------------------------------------------------------------------------
+            */
+
+            $materiels = Materiel::whereIn(
+                'acquisition_id',
+                $ids
+            )->get();
+
+
+
+            $quantiteEnregistree =
+                $materiels->sum('quantite');
+
+
+
+            $nombreBrouillons =
+                $materiels
+                    ->where(
+                        'statut_enregistrement',
+                        'BROUILLON'
+                    )
+                    ->count();
+
+
+
+            $quantiteBrouillon =
+                $materiels
+                    ->where(
+                        'statut_enregistrement',
+                        'BROUILLON'
+                    )
+                    ->sum('quantite');
+
+
+
+            $quantitePrevue =
+                $items->sum('quantite_prevue');
+
+
+
+            $reste = max(
+                0,
+                $quantitePrevue-$quantiteEnregistree
+            );
+
+
+
+            $progression =
+                $quantitePrevue > 0
+
+                ?
+
+                round(
+                    ($quantiteEnregistree/$quantitePrevue)*100,
+                    2
+                )
+
+                :
+
+                0;
+
+
+
+            if($nombreBrouillons > 0){
+
+                $statut='A_COMPLETER';
+
+            }
+            elseif($reste > 0){
+
+                $statut='EN_COURS';
+
+            }
+            else{
+
+                $statut='TERMINEE';
 
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | TOUTES LES ACQUISITIONS IDENTIQUES
-            |--------------------------------------------------------------------------
-            */
 
-            $acquisitions = Acquisition::where('numero_reference', $acquisition->numero_reference)
-                ->where('type_acquisition', $acquisition->type_acquisition)
-                ->whereDate('date_acquisition', $acquisition->date_acquisition)
-                ->where('fournisseur_nom', $acquisition->fournisseur_nom)
-                ->get();
 
-            /*
-            |--------------------------------------------------------------------------
-            | IDS DES ACQUISITIONS
-            |--------------------------------------------------------------------------
-            */
+            return [
 
-            $ids = $acquisitions->pluck('id');
+                'id'=>$premier->id,
 
-            /*
-            |--------------------------------------------------------------------------
-            | MATERIELS
-            |--------------------------------------------------------------------------
-            */
+                'type_acquisition'=>$premier->type_acquisition,
 
-            $materiels = Materiel::with([
-                'attributions' => function ($query) {
-                    $query->orderBy('date_debut', 'asc');
-                },
-            ])
-                ->whereIn('acquisition_id', $ids)
-                ->orderBy('code_materiel')
-                ->get()
-                ->map(function ($materiel) {
+                'numero_reference'=>$premier->numero_reference,
 
-                    $premiereAttribution = $materiel->attributions->first();
+                'date_acquisition'=>$premier->date_acquisition,
 
-                    return [
 
-                        'id' => $materiel->id,
+                'fournisseur_nom'=>$premier->fournisseur_nom,
 
-                        'code_materiel' => $materiel->code_materiel,
+                'fournisseur_contact'=>$premier->fournisseur_contact,
 
-                        'numero_serie' => $materiel->numero_serie,
+                'fournisseur_adresse'=>$premier->fournisseur_adresse,
 
-                        'marque' => $materiel->marque,
 
-                        'modele' => $materiel->modele,
+                'montant'=>$items->sum('montant'),
 
-                        'type_materiel' => $materiel->type_materiel,
 
-                        'etat' => $materiel->etat,
+                'quantite_prevue'=>$quantitePrevue,
 
-                        'cout' => $materiel->cout,
+                'quantite_enregistree'=>$quantiteEnregistree,
 
-                        /*
-                        |--------------------------------------------------------------------------
-                        | Mise en service = Première attribution
-                        |--------------------------------------------------------------------------
-                        */
-                        'date_mise_service' => optional($premiereAttribution)->date_debut,
+                'reste_a_saisir'=>$reste,
 
-                        /*
-                        |--------------------------------------------------------------------------
-                        | Informations métier
-                        |--------------------------------------------------------------------------
-                        */
-                        'nombre_attributions' => $materiel->attributions->count(),
+                'progression'=>$progression,
 
-                        'statut_age' => $materiel->attributions->count() > 0
-                            ? 'ancien'
-                            : 'nouveau',
 
-                    ];
+                'nombre_brouillons'=>$nombreBrouillons,
 
-                });
+                'quantite_brouillon'=>$quantiteBrouillon,
 
-            /*
-            |--------------------------------------------------------------------------
-            | STATISTIQUES
-            |--------------------------------------------------------------------------
-            */
 
-            $stats = [
+                'nombre_materiels'=>$materiels->count(),
 
-                'nombre_materiels' => $materiels->count(),
 
-                'nombre_disponibles' => $materiels->where('etat', 'disponible')->count(),
+                'statut'=>$statut,
 
-                'nombre_attribues' => $materiels->where('etat', 'attribue')->count(),
-
-                'nombre_en_panne' => $materiels->where('etat', 'panne')->count(),
-
-                'nombre_en_maintenance' => $materiels->where('etat', 'maintenance')->count(),
-
-                'nouveaux' => $materiels->where('statut_age', 'nouveau')->count(),
-
-                'anciens' => $materiels->where('statut_age', 'ancien')->count(),
 
             ];
 
-            return response()->json([
 
-                'success' => true,
+        })->values();
 
-                'message' => 'Détails récupérés avec succès.',
 
-                'data' => [
 
-                    'id' => $acquisition->id,
+        return response()->json([
 
-                    'type_acquisition' => $acquisition->type_acquisition,
 
-                    'numero_reference' => $acquisition->numero_reference,
+            'success'=>true,
 
-                    'date_acquisition' => $acquisition->date_acquisition,
 
-                    'fournisseur_nom' => $acquisition->fournisseur_nom,
+            'message'=>'Liste des acquisitions récupérée avec succès.',
 
-                    'fournisseur_contact' => $acquisition->fournisseur_contact,
 
-                    'fournisseur_adresse' => $acquisition->fournisseur_adresse,
+            'data'=>$data,
 
-                    'montant' => $acquisition->montant,
 
-                    'nombre_lignes' => $acquisitions->count(),
+            'pagination'=>[
 
-                    'materiels' => $materiels,
+                'current_page'=>(int)$page,
 
-                    'statistiques' => $stats,
+                'per_page'=>$perPage,
 
-                ],
+                'total'=>$groupes->count(),
 
-            ]);
+                'last_page'=>ceil(
+                    $groupes->count()/$perPage
+                ),
 
-        } catch (\Throwable $e) {
+            ]
 
-            return response()->json([
 
-                'success' => false,
+        ]);
 
-                'message' => 'Erreur lors du chargement.',
 
-                'error' => $e->getMessage(),
 
-            ], 500);
-
-        }
     }
+    catch(\Throwable $e){
+
+
+        return response()->json([
+
+            'success'=>false,
+
+            'message'=>'Erreur lors du chargement des acquisitions.',
+
+            'error'=>$e->getMessage()
+
+        ],500);
+
+    }
+}
+
+    public function detailAcquisition($id)
+{
+    try {
+        $acquisition = Acquisition::find($id);
+
+        if (! $acquisition) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Acquisition introuvable.',
+            ], 404);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | Toutes les acquisitions ayant la même référence
+        |--------------------------------------------------------------------------
+        */
+        $acquisitions = Acquisition::where('numero_reference', $acquisition->numero_reference)
+            ->where('type_acquisition', $acquisition->type_acquisition)
+            ->whereDate('date_acquisition', $acquisition->date_acquisition)
+            ->where('fournisseur_nom', $acquisition->fournisseur_nom)
+            ->get();
+
+        $ids = $acquisitions->pluck('id');
+
+        /*
+        |--------------------------------------------------------------------------
+        | Chargement complet des matériels
+        |--------------------------------------------------------------------------
+        */
+        $materiels = Materiel::with([
+            /*
+            | Historique des attributions
+            */
+            'attributions' => function ($query) {
+                $query->with([
+                    'user:id,nom,prenom',
+                    'direction:id,nom',
+                    'site:id,nom',
+                ])
+                ->orderBy('date_debut', 'asc');
+            },
+            /*
+            | Historique des mouvements
+            */
+            'mouvements' => function ($query) {
+                $query->with([
+                    'user:id,nom,prenom',
+                    'creator:id,nom,prenom',
+                    'direction:id,nom',
+                    'site:id,nom',
+                ])
+                ->orderBy('date_mouvement', 'asc');
+            },
+        ])
+            ->whereIn('acquisition_id', $ids)
+            ->orderBy('code_materiel')
+            ->get();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Transformation réponse
+        |--------------------------------------------------------------------------
+        */
+        $materiels = $materiels->map(function ($materiel) {
+            /*
+            | Dernière attribution active
+            */
+            $attributionActive = $materiel->attributions
+                ->where('statut', 'ACTIVE')
+                ->first();
+
+            // 🔥 CORRECTION : Vérifier si la relation user existe avant d'y accéder
+            $possesseurActuel = null;
+            if ($attributionActive && $attributionActive->user) {
+                $possesseurActuel = [
+                    'user' => [
+                        'id' => $attributionActive->user->id,
+                        'nom' => $attributionActive->user->nom,
+                        'prenom' => $attributionActive->user->prenom,
+                    ],
+                    'direction' => $attributionActive->direction ? [
+                        'id' => $attributionActive->direction->id,
+                        'nom' => $attributionActive->direction->nom,
+                    ] : null,
+                    'site' => $attributionActive->site ? [
+                        'id' => $attributionActive->site->id,
+                        'nom' => $attributionActive->site->nom,
+                    ] : null,
+                    'attribue_par' => [
+                        'id' => $attributionActive->user->id,
+                        'nom' => $attributionActive->user->nom,
+                        'prenom' => $attributionActive->user->prenom,
+                    ],
+                    'date_attribution' => $attributionActive->date_debut,
+                ];
+            }
+
+            return [
+                'id' => $materiel->id,
+                'code_materiel' => $materiel->code_materiel,
+                'numero_serie' => $materiel->numero_serie,
+                'marque' => $materiel->marque,
+                'modele' => $materiel->modele,
+                'type_materiel' => $materiel->type_materiel,
+                'etat' => $materiel->etat,
+                'cout' => $materiel->cout,
+                'date_mise_service' => $materiel->date_mise_service,
+                'categorie' => $materiel->categorie ?? null,
+                'est_accessoire' => $materiel->est_accessoire ?? false,
+
+                'possesseur_actuel' => $possesseurActuel,
+
+                'historique_attributions' => $materiel->attributions->map(function ($attr) {
+                    return [
+                        'user' => $attr->user ? [
+                            'id' => $attr->user->id,
+                            'nom' => $attr->user->nom,
+                            'prenom' => $attr->user->prenom,
+                        ] : null,
+                        'direction' => $attr->direction ? [
+                            'id' => $attr->direction->id,
+                            'nom' => $attr->direction->nom,
+                        ] : null,
+                        'site' => $attr->site ? [
+                            'id' => $attr->site->id,
+                            'nom' => $attr->site->nom,
+                        ] : null,
+                        'date_debut' => $attr->date_debut,
+                        'date_fin' => $attr->date_fin,
+                        'statut' => $attr->statut,
+                        'effectue_par' => $attr->user ? [
+                            'id' => $attr->user->id,
+                            'nom' => $attr->user->nom,
+                            'prenom' => $attr->user->prenom,
+                        ] : null,
+                    ];
+                })->values(),
+
+                'historique_mouvements' => $materiel->mouvements->map(function ($mvt) {
+                    return [
+                        'type_mouvement' => $mvt->type_mouvement,
+                        'date' => $mvt->date_mouvement,
+                        'ancienne_valeur' => $mvt->ancienne_valeur,
+                        'nouvelle_valeur' => $mvt->nouvelle_valeur,
+                        'observation' => $mvt->observation,
+                        'effectue_par' => $mvt->user ? [
+                            'id' => $mvt->user->id,
+                            'nom' => $mvt->user->nom,
+                            'prenom' => $mvt->user->prenom,
+                        ] : null,
+                        'cree_par' => $mvt->creator ? [
+                            'id' => $mvt->creator->id,
+                            'nom' => $mvt->creator->nom,
+                            'prenom' => $mvt->creator->prenom,
+                        ] : null,
+                        'direction' => $mvt->direction ? [
+                            'id' => $mvt->direction->id,
+                            'nom' => $mvt->direction->nom,
+                        ] : null,
+                        'site' => $mvt->site ? [
+                            'id' => $mvt->site->id,
+                            'nom' => $mvt->site->nom,
+                        ] : null,
+                    ];
+                })->values(),
+            ];
+        });
+
+        /*
+        |--------------------------------------------------------------------------
+        | Statistiques
+        |--------------------------------------------------------------------------
+        */
+        $stats = [
+            'nombre_materiels' => $materiels->count(),
+            'disponibles' => $materiels->where('etat', 'disponible')->count(),
+            'attribues' => $materiels->where('etat', 'attribue')->count(),
+            'pannes' => $materiels->where('etat', 'panne')->count(),
+            'maintenance' => $materiels->where('etat', 'maintenance')->count(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Détails acquisition récupérés.',
+            'data' => [
+                'acquisition' => [
+                    'id' => $acquisition->id,
+                    'type_acquisition' => $acquisition->type_acquisition,
+                    'numero_reference' => $acquisition->numero_reference,
+                    'date_acquisition' => $acquisition->date_acquisition,
+                    'fournisseur_nom' => $acquisition->fournisseur_nom,
+                    'fournisseur_contact' => $acquisition->fournisseur_contact,
+                    'fournisseur_adresse' => $acquisition->fournisseur_adresse,
+                    'montant' => $acquisition->montant,
+                    'observation' => $acquisition->observation_acquisition ?? null,
+                ],
+                'nombre_acquisitions' => $acquisitions->count(),
+                'materiels' => $materiels,
+                'statistiques' => $stats,
+            ],
+        ]);
+
+    } catch (\Throwable $e) {
+        // 🔥 Log l'erreur complète pour le débogage
+        // \Log::error('Erreur detailAcquisition', [
+        //     'id' => $id,
+        //     'message' => $e->getMessage(),
+        //     'trace' => $e->getTraceAsString(),
+        // ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erreur chargement détail acquisition',
+            'error' => $e->getMessage(),
+        ], 500);
+    }
+}
 
     public function statistiquesAcquisitions()
     {
@@ -752,5 +809,4 @@ class AcquisitionController extends Controller
 
         }
     }
-    
 }

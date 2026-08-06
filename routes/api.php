@@ -13,7 +13,9 @@ use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/register', [AuthController::class, 'register']);
 
+// DashboardController
 Route::middleware('auth:api')->group(function () {
     Route::get('/statistics', [DashboardController::class, 'statistics']);
     Route::get('/recent-assignments', [DashboardController::class, 'recentAssignments']);
@@ -21,27 +23,29 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/attribution-evolution', [DashboardController::class, 'evolutionAttributions']);
 });
 
+// AuthController
 Route::middleware('auth:api')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
-    Route::post('/register', [AuthController::class, 'register'])->middleware('role:ADMIN');
+
     Route::post('/security-log', [AuthController::class, 'store']);
     Route::post('/refresh-token', [AuthController::class, 'refreshToken']);
 });
 
-Route::middleware(['auth:api', 'role:ADMIN,GESTIONNAIRE'])->group(function () {
+// UserController BeneficiaireController
+Route::middleware(['auth:api'])->group(function () {
 
     Route::post('/import-employes', [UserController::class, 'import']);
     Route::get('/users', [UserController::class, 'listUsers']);
-    Route::get('/users/statistics', [UserController::class, 'userStatistics']);
+    Route::get('/statistics/users', [UserController::class, 'userStatistics']);
 
     Route::put('/users/{id}', [UserController::class, 'UpdateUsers']);
     Route::get('/users/{id}', [UserController::class, 'DetailUsers']);
 
-    Route::get('/beneficiaires/stats', [BeneficiaireController::class, 'statistics']);
     Route::get('/beneficiaires/all', [BeneficiaireController::class, 'getBeneficiairesSelect']);
 
 });
 
+// MaterielController
 Route::middleware('auth:api')->group(function () {
 
     Route::get('/materiels/disponibles', [MaterielController::class, 'getMaterielsDisponibles']);
@@ -52,15 +56,17 @@ Route::middleware('auth:api')->group(function () {
 
     Route::post('/materiels', [MaterielController::class, 'AjoutMateriel']);
     Route::post('/brouillon', [MaterielController::class, 'AjoutMaterielBrouillon']);
-    // Route::get('/materiels', [MaterielController::class, 'listMateriels']);
+    Route::get('/materiels/rebuts',[MaterielController::class, 'listMaterielsRebut']);
 
     Route::get('/materiels/{id}', [MaterielController::class, 'detailMateriel']);
     Route::put('/materiels/{id}', [MaterielController::class, 'updateMateriel']);
     Route::delete('/materiels/{id}', [MaterielController::class, 'deleteMateriel']);
     Route::put('/materiels/{id}/valider', [MaterielController::class, 'ValiderMateriel']);
     Route::get('/acquisitions/{id}/continuer-saisie', [MaterielController::class, 'continuerSaisieMateriel']);
+     Route::patch('/materiels/{id}/mettre-au-rebut',[MaterielController::class, 'mettreAuRebut']);
 });
 
+// AttributionController
 Route::middleware('auth:api')->group(function () {
 
     // Attributions
@@ -94,6 +100,7 @@ Route::middleware('auth:api')->group(function () {
 
 });
 
+// AcquisitionController
 Route::middleware('auth:api')->group(function () {
     Route::post('/acquisitions', [AcquisitionController::class, 'createAcquisition']);
     Route::get('/acquisitions', [AcquisitionController::class, 'listAcquisitions']);
@@ -101,12 +108,14 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/acquisitions/{id}', [AcquisitionController::class, 'detailAcquisition']);
 });
 
+//DashboardController
 Route::middleware('auth:api')->group(function () {
     Route::get('/dashboard/statistics', [DashboardController::class, 'dashboardStatistics']);
     Route::get('/statistiques/situation-materiels', [DashboardController::class, 'situationMateriels']);
     Route::get('/dashboard/materiels-par-site', [DashboardController::class, 'materielsParSite']);
 });
 
+//DirectionController
 Route::middleware(['auth:api', 'role:ADMIN,GESTIONNAIRE'])->group(function () {
     Route::post('/directions', [DirectionController::class, 'AjoutDirection']);
     Route::get('/directions', [DirectionController::class, 'listDirections']);
@@ -116,7 +125,7 @@ Route::middleware(['auth:api', 'role:ADMIN,GESTIONNAIRE'])->group(function () {
 });
 
 
-
+//DocumentController
 Route::middleware('auth:api')->group(function () {
 
     Route::get('/documents', [DocumentController::class, 'listeDocuments']);
@@ -127,14 +136,13 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/documents/{id}/telecharger', [DocumentController::class, 'telechargerDocument']);
 
-    Route::delete(
-        '/documents/{id}',
-        [DocumentController::class, 'supprimerDocument']
-    );
+    Route::delete('/documents/{id}',[DocumentController::class, 'supprimerDocument']);
 
     Route::get('/documents/{id}', [DocumentController::class, 'detailDocument']);
 });
 
+
+//MouvementMaterielController
 Route::middleware('auth:api')->group(function () {
 
     Route::get('/mouvements/historique', [MouvementMaterielController::class, 'historiqueMouvements']);

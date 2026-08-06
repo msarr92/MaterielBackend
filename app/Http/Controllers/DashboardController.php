@@ -333,185 +333,187 @@ class DashboardController extends Controller
     {
         try {
 
-            $today = Carbon::now();
+            $query = Attribution::with([
+                'materiel',
+                'direction:id,nom',
+                'site:id,nom',
+            ])
+                ->where('statut', 'ACTIVE');
 
             /*
             |--------------------------------------------------------------------------
-            | Récupération des équipements attribués
+            | FILTRES
             |--------------------------------------------------------------------------
             */
 
-            $materiels = Materiel::with([
+            if ($request->filled('direction_id')) {
 
-                'attributions' => function ($query) {
+                $query->where('direction_id', $request->direction_id);
 
-                    $query->where('statut', 'ACTIVE')
-                        ->with([
-                            'direction:id,nom',
-                            'site:id,nom',
-                        ]);
+            }
 
-                },
+            if ($request->filled('site_id')) {
 
-            ])
-                ->where('categorie', 'EQUIPEMENT')
-                ->get();
+                $query->where('site_id', $request->site_id);
 
-            $statistiques = [];
+            }
 
-            foreach ($materiels as $materiel) {
+            $attributions = $query->get();
 
-                /*
-                |--------------------------------------------------------------------------
-                | Dernière attribution active
-                |--------------------------------------------------------------------------
-                */
+            $resultats = [];
 
-                $attribution = $materiel->attributions->first();
+            foreach ($attributions as $attribution) {
 
-                /*
-                | Si le matériel n'a pas encore été attribué
-                | on le met dans STOCK CENTRAL
-                */
+                if (! $attribution->materiel) {
 
-                if (! $attribution) {
-
-                    $direction = 'STOCK CENTRAL';
-
-                    $site = 'STOCK CENTRAL';
-
-                } else {
-
-                    $direction = $attribution->direction?->nom
-                        ?? 'Sans direction';
-
-                    $site = $attribution->site?->nom
-                        ?? 'Sans site';
+                    continue;
 
                 }
 
-                $cle = $direction.'_'.$site;
+                /*
+                |--------------------------------------------------------------------------
+                | Uniquement les équipements
+                |--------------------------------------------------------------------------
+                */
 
-                if (! isset($statistiques[$cle])) {
+                if ($attribution->materiel->categorie != 'EQUIPEMENT') {
 
-                    $statistiques[$cle] = [
+                    continue;
+
+                }
+
+                $direction = $attribution->direction?->nom ?? 'Sans direction';
+
+                $site = $attribution->site?->nom ?? 'Sans site';
+
+                $cle = $direction.'-'.$site;
+
+                if (! isset($resultats[$cle])) {
+
+                    $resultats[$cle] = [
 
                         'direction' => $direction,
 
                         'site' => $site,
 
-                        'nombre_equipements' => 0,
+                        /*
+                        |--------------------------------------------------------------------------
+                        | KPI
+                        |--------------------------------------------------------------------------
+                        */
 
-                        'nombre_equipements_ondules' => 0,
+                        'total' => 0,
 
-                        'equipements_disponibles' => 0,
+                        'ondules' => 0,
 
-                        'equipements_moins_5_ans' => 0,
+                        'moins_5_ans' => 0,
 
-                        'equipements_plus_5_ans' => 0,
+                        'plus_5_ans' => 0,
+
+                        'disponibles' => 0,
+
+                        'indisponibles' => 0,
 
                     ];
 
                 }
 
-                /*
-                |--------------------------------------------------------------------------
-                | Nombre total équipements
-                |--------------------------------------------------------------------------
-                */
-
-                $statistiques[$cle]['nombre_equipements']++;
+                $materiel = $attribution->materiel;
 
                 /*
                 |--------------------------------------------------------------------------
-                | Equipements ondulés
+                | TOTAL
                 |--------------------------------------------------------------------------
                 */
 
-                if ($materiel->onduleur == true) {
+                $resultats[$cle]['total']++;
 
-                    $statistiques[$cle]['nombre_equipements_ondules']++;
+                /*
+                |--------------------------------------------------------------------------
+                | ONDULE
+                |--------------------------------------------------------------------------
+                */
+
+                if ($materiel->onduleur) {
+
+                    $resultats[$cle]['ondules']++;
 
                 }
 
                 /*
                 |--------------------------------------------------------------------------
-                | Disponibilité
+                | DISPONIBILITE
                 |--------------------------------------------------------------------------
                 */
 
                 if ($materiel->etat == 'disponible') {
 
-                    $statistiques[$cle]['equipements_disponibles']++;
+                    $resultats[$cle]['disponibles']++;
+
+                } else {
+
+                    $resultats[$cle]['indisponibles']++;
 
                 }
 
                 /*
                 |--------------------------------------------------------------------------
-                | Calcul âge matériel
+                | AGE
                 |--------------------------------------------------------------------------
                 */
 
-                if ($materiel->date_mise_service) {
+                if (! empty($materiel->date_mise_service)) {
 
                     $age = Carbon::parse(
                         $materiel->date_mise_service
-                    )
-                        ->diffInYears($today);
+                    )->diffInYears(now());
 
                     if ($age < 5) {
 
-                        $statistiques[$cle]['equipements_moins_5_ans']++;
+                        $resultats[$cle]['moins_5_ans']++;
 
                     } else {
 
-                        $statistiques[$cle]['equipements_plus_5_ans']++;
+                        $resultats[$cle]['plus_5_ans']++;
 
                     }
 
                 }
 
             }
-
             /*
-            |--------------------------------------------------------------------------
-            | Calcul des taux
-            |--------------------------------------------------------------------------
-            */
+        |--------------------------------------------------------------------------
+        | Calcul des KPI
+        |--------------------------------------------------------------------------
+        */
 
-            foreach ($statistiques as &$item) {
+            foreach ($resultats as &$item) {
 
-                $total = $item['nombre_equipements'];
+                $total = $item['total'];
 
                 /*
-                | Taux disponibilité
+                |--------------------------------------------------------------------------
+                | Taux de disponibilité
+                |--------------------------------------------------------------------------
                 */
 
                 $item['taux_disponibilite'] = $total > 0
-
-                    ? round(
-                        ($item['equipements_disponibles'] / $total) * 100,
-                        2
-                    )
-
-                    : 0;
-
-                /*
-                | Taux vétusté
-                */
-
-                $item['taux_vetuste'] = $total > 0
-
-                    ? round(
-                        ($item['equipements_plus_5_ans'] / $total) * 100,
-                        2
-                    )
-
+                    ? round(($item['disponibles'] / $total) * 100, 2)
                     : 0;
 
                 /*
                 |--------------------------------------------------------------------------
-                | Objectifs KPI
+                | Taux de vétusté
+                |--------------------------------------------------------------------------
+                */
+
+                $item['taux_vetuste'] = $total > 0
+                    ? round(($item['plus_5_ans'] / $total) * 100, 2)
+                    : 0;
+
+                /*
+                |--------------------------------------------------------------------------
+                | Objectif & Seuil critique
                 |--------------------------------------------------------------------------
                 */
 
@@ -520,34 +522,88 @@ class DashboardController extends Controller
                 $item['seuil_critique'] = 80;
 
                 /*
-                | Alerte
+                |--------------------------------------------------------------------------
+                | Statut disponibilité
+                |--------------------------------------------------------------------------
                 */
 
-                $item['statut_disponibilite'] =
+                if ($item['taux_disponibilite'] >= $item['objectif']) {
 
-                    $item['taux_disponibilite'] >= $item['objectif']
+                    $item['statut_disponibilite'] = 'BON';
 
-                        ? 'NORMAL'
+                } elseif ($item['taux_disponibilite'] >= $item['seuil_critique']) {
 
-                        : (
+                    $item['statut_disponibilite'] = 'ATTENTION';
 
-                            $item['taux_disponibilite'] < $item['seuil_critique']
+                } else {
 
-                            ? 'CRITIQUE'
+                    $item['statut_disponibilite'] = 'CRITIQUE';
 
-                            : 'A_SURVEILLER'
+                }
 
-                        );
+                /*
+                |--------------------------------------------------------------------------
+                | Statut vétusté
+                |--------------------------------------------------------------------------
+                */
 
-                $item['statut_vetuste'] =
+                if ($item['taux_vetuste'] >= 50) {
 
-                    $item['taux_vetuste'] > 50
+                    $item['statut_vetuste'] = 'CRITIQUE';
 
-                        ? 'CRITIQUE'
+                } elseif ($item['taux_vetuste'] >= 30) {
 
-                        : 'NORMAL';
+                    $item['statut_vetuste'] = 'ATTENTION';
+
+                } else {
+
+                    $item['statut_vetuste'] = 'BON';
+
+                }
 
             }
+
+            unset($item);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Totaux globaux
+            |--------------------------------------------------------------------------
+            */
+
+            $resume = [
+
+                'total' => collect($resultats)->sum('total'),
+
+                'ondules' => collect($resultats)->sum('ondules'),
+
+                'moins_5_ans' => collect($resultats)->sum('moins_5_ans'),
+
+                'plus_5_ans' => collect($resultats)->sum('plus_5_ans'),
+
+                'disponibles' => collect($resultats)->sum('disponibles'),
+
+                'indisponibles' => collect($resultats)->sum('indisponibles'),
+
+            ];
+
+            $resume['taux_disponibilite'] = $resume['total'] > 0
+                ? round(($resume['disponibles'] / $resume['total']) * 100, 2)
+                : 0;
+
+            $resume['taux_vetuste'] = $resume['total'] > 0
+                ? round(($resume['plus_5_ans'] / $resume['total']) * 100, 2)
+                : 0;
+
+            $resume['objectif'] = 95;
+
+            $resume['seuil_critique'] = 80;
+
+            /*
+            |--------------------------------------------------------------------------
+            | Réponse
+            |--------------------------------------------------------------------------
+            */
 
             return response()->json([
 
@@ -555,7 +611,13 @@ class DashboardController extends Controller
 
                 'message' => 'Situation des équipements récupérée avec succès.',
 
-                'data' => array_values($statistiques),
+                'data' => [
+
+                    'resume' => $resume,
+
+                    'par_direction_site' => array_values($resultats),
+
+                ],
 
             ]);
 
@@ -565,7 +627,7 @@ class DashboardController extends Controller
 
                 'success' => false,
 
-                'message' => 'Erreur lors du calcul de la situation des équipements.',
+                'message' => 'Erreur lors du calcul de la situation.',
 
                 'error' => $e->getMessage(),
 

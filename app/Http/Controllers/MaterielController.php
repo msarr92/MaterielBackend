@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Str;
 use Illuminate\Validation\Rule;
+use Illuminate\Validation\ValidationException;
 
 class MaterielController extends Controller
 {
@@ -812,7 +813,6 @@ class MaterielController extends Controller
     public function listEquipements(Request $request)
     {
         try {
-
             $validator = Validator::make($request->all(), [
                 'search' => 'nullable|string|max:100',
                 'etat' => 'nullable|in:disponible,attribue,panne,maintenance',
@@ -820,12 +820,10 @@ class MaterielController extends Controller
             ]);
 
             if ($validator->fails()) {
-
                 return response()->json([
                     'success' => false,
                     'message' => $validator->errors()->first(),
                 ], 422);
-
             }
 
             $search = trim($request->search ?? '');
@@ -837,58 +835,39 @@ class MaterielController extends Controller
             ])
                 ->withCount('attributions')
                 ->where('categorie', 'EQUIPEMENT')
+                ->where('etat', '!=', 'rebut')
                 ->orderByDesc('id');
 
             if (! empty($search)) {
-
                 $query->where(function ($q) use ($search) {
-
                     $q->where('code_materiel', 'LIKE', "%{$search}%")
                         ->orWhere('numero_serie', 'LIKE', "%{$search}%")
                         ->orWhere('marque', 'LIKE', "%{$search}%")
                         ->orWhere('modele', 'LIKE', "%{$search}%")
                         ->orWhere('type_materiel', 'LIKE', "%{$search}%");
-
                 });
-
             }
 
             if (! empty($etat)) {
-
                 $query->where('etat', $etat);
-
             }
 
             $materiels = $query->paginate($perPage);
 
             $data = $materiels->through(function ($item) {
-
                 return [
-
                     'id' => $item->id,
-
                     'code_materiel' => $item->code_materiel,
-
                     'numero_serie' => $item->numero_serie,
-
                     'marque' => $item->marque,
-
                     'modele' => $item->modele,
-
                     'type_materiel' => $item->type_materiel,
-
                     'etat' => $item->etat,
-
                     'onduleur' => $item->onduleur,
-
                     'capacite' => $item->capacite,
-
                     'cout' => $item->cout,
-
                     'date_mise_service' => $item->date_mise_service,
-
                     'acquisition' => $item->acquisition,
-
                     'total_attributions' => $item->attributions_count,
 
                     'statut_age' => $item->attributions_count > 0
@@ -896,40 +875,25 @@ class MaterielController extends Controller
                         : 'nouveau',
 
                     'created_at' => $item->created_at,
-
                 ];
-
             });
 
             return response()->json([
-
                 'success' => true,
-
                 'message' => 'Liste des équipements.',
-
                 'data' => $data,
-
                 'pagination' => [
-
                     'current_page' => $materiels->currentPage(),
-
                     'last_page' => $materiels->lastPage(),
-
                     'per_page' => $materiels->perPage(),
-
                     'total' => $materiels->total(),
-
                 ],
-
             ]);
-
         } catch (\Throwable $e) {
-
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
             ], 500);
-
         }
     }
 
@@ -1457,86 +1421,150 @@ class MaterielController extends Controller
     }
 
     public function deleteMateriel($id)
-    {
-        try {
+{
+    if (! is_numeric($id)) {
+        return response()->json([
+            'success' => false,
+            'message' => 'Identifiant invalide.',
+        ], 400);
+    }
 
-            if (! is_numeric($id)) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Identifiant invalide',
-                ], 400);
-            }
+    try {
+        DB::beginTransaction();
 
-            $materiel = Materiel::with(['acquisition', 'mouvements'])->find($id);
+        /*
+        |--------------------------------------------------------------------------
+        | 1. Récupérer et verrouiller le matériel
+        |--------------------------------------------------------------------------
+        */
 
-            if (! $materiel) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Matériel introuvable',
-                ], 404);
-            }
+        $materiel = Materiel::query()
+            ->lockForUpdate()
+            ->find($id);
 
-            DB::beginTransaction();
-
-            /*
-            |--------------------------------------------------------------------------
-            | 1. Vérification des dépendances métier
-            |--------------------------------------------------------------------------
-            */
-
-            $hasAttribution = Attribution::where('materiel_id', $id)->exists();
-
-            if ($hasAttribution) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Impossible de supprimer un matériel déjà attribué',
-                ], 409);
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | 2. Suppression des mouvements liés (si FK sans cascade)
-            |--------------------------------------------------------------------------
-            */
-
-            MouvementMateriel::where('materiel_id', $id)->delete();
-
-            /*
-            |--------------------------------------------------------------------------
-            | 3. Suppression acquisition liée (si non utilisée ailleurs)
-            |--------------------------------------------------------------------------
-            */
-
-            if ($materiel->acquisition) {
-                $materiel->acquisition->delete();
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | 4. Suppression du matériel
-            |--------------------------------------------------------------------------
-            */
-
-            $materiel->delete();
-
-            DB::commit();
-
-            return response()->json([
-                'success' => true,
-                'message' => 'Matériel supprimé avec succès',
-            ]);
-
-        } catch (\Exception $e) {
-
+        if (! $materiel) {
             DB::rollBack();
 
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de la suppression',
-                'error' => $e->getMessage(), // utile pour debug
-            ], 500);
+                'message' => 'Matériel introuvable.',
+            ], 404);
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 2. Autoriser uniquement la suppression d'un matériel au rebut
+        |--------------------------------------------------------------------------
+        */
+
+        if ($materiel->etat !== 'rebut') {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Suppression impossible. Le matériel doit d’abord être mis au rebut.',
+                'data' => [
+                    'materiel_id' => $materiel->id,
+                    'code_materiel' => $materiel->code_materiel,
+                    'etat_actuel' => $materiel->etat,
+                ],
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 3. Vérifier qu'il n'existe aucune attribution encore active
+        |--------------------------------------------------------------------------
+        */
+
+        $hasActiveAttribution = Attribution::query()
+            ->where('materiel_id', $materiel->id)
+            ->where(function ($query) {
+                $query->whereNull('date_fin')
+                    ->orWhereIn('statut', [
+                        'ACTIVE',
+                        'EN_PANNE',
+                        'EN_MAINTENANCE',
+                    ]);
+            })
+            ->exists();
+
+        if ($hasActiveAttribution) {
+            DB::rollBack();
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Suppression impossible. Une attribution liée à ce matériel est encore active.',
+            ], 409);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | 4. Supprimer les mouvements liés
+        |--------------------------------------------------------------------------
+        |
+        | Cette suppression est facultative si la clé étrangère utilise
+        | cascadeOnDelete(), mais elle reste explicite ici.
+        |
+        */
+
+        MouvementMateriel::query()
+            ->where('materiel_id', $materiel->id)
+            ->delete();
+
+        /*
+        |--------------------------------------------------------------------------
+        | 5. Supprimer les anciennes attributions
+        |--------------------------------------------------------------------------
+        |
+        | La table attributions utilise cascadeOnDelete() sur materiel_id.
+        | Laravel/PostgreSQL peut donc les supprimer automatiquement avec le
+        | matériel. Cette suppression explicite n'est pas obligatoire.
+        |
+        */
+
+        Attribution::query()
+            ->where('materiel_id', $materiel->id)
+            ->delete();
+
+        /*
+        |--------------------------------------------------------------------------
+        | 6. Supprimer le matériel
+        |--------------------------------------------------------------------------
+        */
+
+        $codeMateriel = $materiel->code_materiel;
+
+        $materiel->delete();
+
+        /*
+        |--------------------------------------------------------------------------
+        | Important : ne pas supprimer l'acquisition
+        |--------------------------------------------------------------------------
+        |
+        | Une acquisition peut être associée à plusieurs matériels.
+        |
+        */
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => "Le matériel {$codeMateriel} a été supprimé avec succès.",
+        ]);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        report($e);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erreur lors de la suppression du matériel.',
+            'error' => config('app.debug') ? $e->getMessage() : null,
+        ], 500);
     }
+}
 
     /**
      * Récupérer les statistiques des matériels
@@ -1713,6 +1741,260 @@ class MaterielController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Erreur lors du chargement des matériels disponibles',
+            ], 500);
+        }
+    }
+
+    public function mettreAuRebut(Request $request, int $id)
+    {
+        $validated = $request->validate([
+            'date_rebut' => [
+                'nullable',
+                'date',
+                'before_or_equal:today',
+            ],
+
+            'motif_rebut' => [
+                'required',
+                'string',
+                'min:3',
+                'max:2000',
+            ],
+
+            'observation' => [
+                'nullable',
+                'string',
+                'max:5000',
+            ],
+        ]);
+
+        $resultat = DB::transaction(function () use ($id, $validated) {
+            /*
+            |--------------------------------------------------------------------------
+            | Récupérer et verrouiller le matériel
+            |--------------------------------------------------------------------------
+            */
+
+            $materiel = Materiel::query()
+                ->lockForUpdate()
+                ->findOrFail($id);
+
+            if ($materiel->etat === 'rebut') {
+                throw ValidationException::withMessages([
+                    'materiel' => 'Ce matériel est déjà au rebut.',
+                ]);
+            }
+
+            $dateRebut = $validated['date_rebut'] ?? now()->toDateString();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Rechercher une attribution active
+            |--------------------------------------------------------------------------
+            */
+
+            $attributionActive = Attribution::query()
+                ->where('materiel_id', $materiel->id)
+                ->whereNull('date_fin')
+                ->whereIn('statut', [
+                    'ACTIVE',
+                    'EN_PANNE',
+                    'EN_MAINTENANCE',
+                ])
+                ->latest('date_debut')
+                ->first();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Terminer l'attribution active
+            |--------------------------------------------------------------------------
+            */
+
+            if ($attributionActive) {
+                $attributionActive->update([
+                    'date_fin' => $dateRebut,
+                    'statut' => 'TERMINE',
+                ]);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Mettre le matériel au rebut
+            |--------------------------------------------------------------------------
+            */
+
+            $materiel->update([
+                'etat' => 'rebut',
+                'date_etat_change' => $dateRebut,
+                'date_rebut' => $dateRebut,
+                'motif_rebut' => $validated['motif_rebut'],
+                'rebute_par' => auth()->id(),
+                'motif_etat' => $validated['motif_rebut'],
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Ajouter le mouvement dans l'historique
+            |--------------------------------------------------------------------------
+            */
+
+            $mouvement = MouvementMateriel::create([
+                'materiel_id' => $materiel->id,
+                'user_id' => $attributionActive?->user_id,
+                'direction_id' => $attributionActive?->direction_id,
+                'type_mouvement' => 'REBUT',
+                'date_mouvement' => $dateRebut,
+                'etat_materiel' => 'rebut',
+                'observation' => $validated['observation']
+                    ?? $validated['motif_rebut'],
+                'created_by' => auth()->id(),
+            ]);
+
+            return [
+                'materiel' => $materiel->fresh([
+                    'acquisition',
+                    'utilisateurRebut',
+                ]),
+                'mouvement' => $mouvement,
+                'ancienne_attribution' => $attributionActive,
+            ];
+        });
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Le matériel a été mis au rebut avec succès.',
+            'data' => $resultat,
+        ]);
+    }
+
+    public function listMaterielsRebut(Request $request)
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'search' => 'nullable|string|max:100',
+                'categorie' => 'nullable|in:EQUIPEMENT,ACCESSOIRE',
+                'per_page' => 'nullable|integer|min:1|max:1000',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $validator->errors()->first(),
+                    'errors' => $validator->errors(),
+                ], 422);
+            }
+
+            $search = trim($request->input('search', ''));
+            $categorie = $request->input('categorie');
+            $perPage = (int) $request->input('per_page', 10);
+
+            $query = Materiel::query()
+                ->with([
+                    'acquisition:id,type_acquisition,numero_reference,date_acquisition,fournisseur_nom',
+                    'utilisateurRebut:id,nom,prenom,matricule,username',
+                ])
+                ->withCount('attributions')
+                ->where('etat', 'rebut')
+                ->orderByDesc('date_rebut')
+                ->orderByDesc('id');
+
+            /*
+            |--------------------------------------------------------------------------
+            | Recherche
+            |--------------------------------------------------------------------------
+            */
+
+            if ($search !== '') {
+                $query->where(function ($q) use ($search) {
+                    $q->where('code_materiel', 'LIKE', "%{$search}%")
+                        ->orWhere('numero_serie', 'LIKE', "%{$search}%")
+                        ->orWhere('marque', 'LIKE', "%{$search}%")
+                        ->orWhere('modele', 'LIKE', "%{$search}%")
+                        ->orWhere('type_materiel', 'LIKE', "%{$search}%")
+                        ->orWhere('motif_rebut', 'LIKE', "%{$search}%");
+                });
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Filtre par catégorie
+            |--------------------------------------------------------------------------
+            */
+
+            if (! empty($categorie)) {
+                $query->where('categorie', $categorie);
+            }
+
+            $materiels = $query->paginate($perPage);
+
+            $data = $materiels->through(function ($item) {
+                return [
+                    'id' => $item->id,
+
+                    'code_materiel' => $item->code_materiel,
+                    'numero_serie' => $item->numero_serie,
+
+                    'marque' => $item->marque,
+                    'modele' => $item->modele,
+                    'type_materiel' => $item->type_materiel,
+
+                    'categorie' => $item->categorie,
+                    'quantite' => $item->quantite,
+                    'capacite' => $item->capacite,
+                    'onduleur' => $item->onduleur,
+
+                    'etat' => $item->etat,
+                    'date_etat_change' => $item->date_etat_change,
+
+                    'date_rebut' => $item->date_rebut,
+                    'motif_rebut' => $item->motif_rebut,
+
+                    'rebute_par' => $item->utilisateurRebut
+                        ? [
+                            'id' => $item->utilisateurRebut->id,
+                            'matricule' => $item->utilisateurRebut->matricule,
+                            'username' => $item->utilisateurRebut->username,
+                            'nom' => $item->utilisateurRebut->nom,
+                            'prenom' => $item->utilisateurRebut->prenom,
+                            'nom_complet' => trim(
+                                $item->utilisateurRebut->prenom.' '.
+                                $item->utilisateurRebut->nom
+                            ),
+                        ]
+                        : null,
+
+                    'cout' => $item->cout,
+                    'date_mise_service' => $item->date_mise_service,
+                    'observation' => $item->observation,
+
+                    'acquisition' => $item->acquisition,
+
+                    'total_attributions' => $item->attributions_count,
+
+                    'created_at' => $item->created_at,
+                    'updated_at' => $item->updated_at,
+                ];
+            });
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Liste des matériels mis au rebut.',
+                'data' => $data,
+                'pagination' => [
+                    'current_page' => $materiels->currentPage(),
+                    'last_page' => $materiels->lastPage(),
+                    'per_page' => $materiels->perPage(),
+                    'total' => $materiels->total(),
+                    'from' => $materiels->firstItem(),
+                    'to' => $materiels->lastItem(),
+                ],
+            ]);
+        } catch (\Throwable $e) {
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Une erreur est survenue lors de la récupération des matériels mis au rebut.',
             ], 500);
         }
     }

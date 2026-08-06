@@ -6,78 +6,232 @@ use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Str;
 use Junges\Kafka\Facades\Kafka;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AuthController extends Controller
 {
-    public function register(Request $request)
-    {
-        // VALIDATION
+   public function register(Request $request)
+{
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION
+        |--------------------------------------------------------------------------
+        */
+
         $request->validate([
-            'username' => ['required', 'string', 'min:3', 'max:80', 'alpha_dash', 'unique:users,username'],
-            'nom' => ['required', 'string', 'max:120'],
-            'prenom' => ['required', 'string', 'max:120'],
-            'password' => ['required', 'string', 'min:12', 'max:128'],
-            'role' => 'required|in:ADMIN,GESTIONNAIRE,USER',
+
+            'username' => [
+                'required',
+                'string',
+                'min:3',
+                'max:80',
+                'regex:/^[A-Za-z0-9._-]+$/',
+                'unique:users,username',
+            ],
+
+            'nom' => [
+                'required',
+                'string',
+                'max:120',
+            ],
+
+            'prenom' => [
+                'required',
+                'string',
+                'max:120',
+            ],
+
+            'role' => [
+                'required',
+                'in:ADMIN,GESTIONNAIRE,USER',
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | USER
+            |--------------------------------------------------------------------------
+            */
+
+            'direction_id' => [
+                'required_if:role,USER',
+                'nullable',
+                'exists:directions,id',
+            ],
+
+            'site_id' => [
+                'required_if:role,USER',
+                'nullable',
+                'exists:sites,id',
+            ],
+
+            /*
+            |--------------------------------------------------------------------------
+            | ADMIN / GESTIONNAIRE
+            |--------------------------------------------------------------------------
+            */
+
+            'password' => [
+                'required_if:role,ADMIN,GESTIONNAIRE',
+                'nullable',
+                'string',
+                'min:6',
+                'max:128',
+            ],
+
         ]);
 
-        // MATRICULE AUTO
-        $year = date('Y');
-        $lastUser = User::orderBy('id', 'desc')->first();
+        /*
+        |--------------------------------------------------------------------------
+        | GENERATION MATRICULE
+        |--------------------------------------------------------------------------
+        */
+
+        $year = now()->year;
+
+        $lastUser = User::latest('id')->first();
+
         $nextId = $lastUser ? $lastUser->id + 1 : 1;
 
-        $matricule = 'ONAS-'.$year.'-'.str_pad($nextId, 4, '0', STR_PAD_LEFT);
+        $matricule = 'ONAS-' . $year . '-' . str_pad($nextId, 4, '0', STR_PAD_LEFT);
 
-        // CREATION USER
+        /*
+        |--------------------------------------------------------------------------
+        | PASSWORD
+        |--------------------------------------------------------------------------
+        | USER -> mot de passe aléatoire
+        | ADMIN/GESTIONNAIRE -> mot de passe fourni
+        |--------------------------------------------------------------------------
+        */
+
+        if ($request->role === 'USER') {
+
+            $password = bcrypt(Str::random(20));
+
+        } else {
+
+            $password = bcrypt($request->password);
+
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATION UTILISATEUR
+        |--------------------------------------------------------------------------
+        */
+
         $user = User::create([
-            'matricule' => $matricule,
-            'username' => $request->username,
-            'nom' => $request->nom,
-            'prenom' => $request->prenom,
-            'role' => $request->role,
-            'password' => bcrypt($request->password),
 
-            // optionnel ONAS
+            'matricule' => $matricule,
+
+            'username' => $request->username,
+
+            'nom' => $request->nom,
+
+            'prenom' => $request->prenom,
+
+            'role' => $request->role,
+
+            'password' => $password,
+
             'direction_id' => $request->direction_id,
+
             'site_id' => $request->site_id,
+
             'actif' => true,
+
         ]);
 
-        // CACHE
-        Cache::put('user_'.$user->id, $user, 3600);
+        /*
+        |--------------------------------------------------------------------------
+        | CACHE
+        |--------------------------------------------------------------------------
+        */
 
-        // EVENT KAFKA (optionnel)
+        Cache::put(
+            'user_' . $user->id,
+            $user,
+            now()->addHour()
+        );
+
+        /*
+        |--------------------------------------------------------------------------
+        | KAFKA (OPTIONNEL)
+        |--------------------------------------------------------------------------
+        */
+
         try {
+
             if (class_exists(Kafka::class)) {
+
                 Kafka::publishOn('auth-events')
                     ->withBody([
+
                         'event' => 'USER_REGISTERED',
+
                         'user_id' => $user->id,
+
                         'matricule' => $user->matricule,
+
                         'role' => $user->role,
+
                         'timestamp' => now(),
+
                     ])
                     ->send();
+
             }
-        } catch (\Exception $e) {
-            // ignore
+
+        } catch (\Throwable $e) {
+
+            // Ne bloque pas la création
+
         }
 
-        // TOKEN (uniquement si ADMIN/GESTIONNAIRE)
-        $token = null;
+        /*
+        |--------------------------------------------------------------------------
+        | JWT UNIQUEMENT ADMIN/GESTIONNAIRE
+        |--------------------------------------------------------------------------
+        */
 
-        if (in_array($user->role, ['ADMIN', 'GESTIONNAIRE'])) {
-            $token = JWTAuth::fromUser($user);
-        }
+
+
+        /*
+        |--------------------------------------------------------------------------
+        | REPONSE
+        |--------------------------------------------------------------------------
+        */
 
         return response()->json([
-            'message' => 'Utilisateur créé avec succès',
-            'user' => $user,
-            'token' => $token,
+
+            'success' => true,
+
+            'message' => 'Utilisateur créé avec succès.',
+
+            'user' => $user->load(['direction', 'site']),
+
+            //'token' => $token,
+
         ], 201);
+
+    } catch (\Throwable $e) {
+
+        return response()->json([
+
+            'success' => false,
+
+            'message' => 'Erreur lors de la création de l\'utilisateur.',
+
+            'error' => $e->getMessage(),
+
+        ], 500);
+
     }
+}
 
     public function login(Request $request)
     {

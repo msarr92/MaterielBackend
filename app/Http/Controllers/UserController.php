@@ -237,134 +237,134 @@ class UserController extends Controller
         }
     }
 
-   public function listUsers(Request $request)
-{
-    try {
+    public function listUsers(Request $request)
+    {
+        try {
 
-        $all = filter_var($request->query('all', false), FILTER_VALIDATE_BOOLEAN);
+            $all = filter_var($request->query('all', false), FILTER_VALIDATE_BOOLEAN);
 
-        $perPage = $request->input('per_page', 10);
+            $perPage = $request->input('per_page', 10);
 
-        $search = trim($request->input('search', ''));
+            $search = trim($request->input('search', ''));
 
-        $roles = $request->filled('role')
-            ? array_map('trim', explode(',', strtoupper($request->role)))
-            : [];
+            $roles = $request->filled('role')
+                ? array_map('trim', explode(',', strtoupper($request->role)))
+                : [];
 
-        $query = User::query()
-            ->with(['direction', 'site'])
-            ->where('actif', true);
+            $query = User::query()
+                ->with(['direction', 'site'])
+                ->where('actif', true);
 
-        /*
-        |--------------------------------------------------------------------------
-        | FILTRE ROLE
-        |--------------------------------------------------------------------------
-        */
+            /*
+            |--------------------------------------------------------------------------
+            | FILTRE ROLE
+            |--------------------------------------------------------------------------
+            */
 
-        if (!empty($roles)) {
+            if (! empty($roles)) {
 
-            $rolesAutorises = ['ADMIN', 'GESTIONNAIRE', 'USER'];
+                $rolesAutorises = ['ADMIN', 'GESTIONNAIRE', 'USER'];
 
-            $roles = array_intersect($roles, $rolesAutorises);
+                $roles = array_intersect($roles, $rolesAutorises);
 
-            if (!empty($roles)) {
+                if (! empty($roles)) {
 
-                $query->whereIn('role', $roles);
+                    $query->whereIn('role', $roles);
+
+                }
 
             }
 
-        }
+            /*
+            |--------------------------------------------------------------------------
+            | RECHERCHE
+            |--------------------------------------------------------------------------
+            */
 
-        /*
-        |--------------------------------------------------------------------------
-        | RECHERCHE
-        |--------------------------------------------------------------------------
-        */
+            if (! empty($search)) {
 
-        if (!empty($search)) {
+                $query->where(function ($q) use ($search) {
 
-            $query->where(function ($q) use ($search) {
+                    $q->where('nom', 'ILIKE', "%{$search}%")
+                        ->orWhere('prenom', 'ILIKE', "%{$search}%")
+                        ->orWhere('matricule', 'ILIKE', "%{$search}%")
+                        ->orWhere('username', 'ILIKE', "%{$search}%");
 
-                $q->where('nom', 'ILIKE', "%{$search}%")
-                    ->orWhere('prenom', 'ILIKE', "%{$search}%")
-                    ->orWhere('matricule', 'ILIKE', "%{$search}%")
-                    ->orWhere('username', 'ILIKE', "%{$search}%");
+                });
 
-            });
+            }
 
-        }
+            $query->orderBy('nom')
+                ->orderBy('prenom');
 
-        $query->orderBy('nom')
-              ->orderBy('prenom');
+            /*
+            |--------------------------------------------------------------------------
+            | SANS PAGINATION
+            |--------------------------------------------------------------------------
+            */
 
-        /*
-        |--------------------------------------------------------------------------
-        | SANS PAGINATION
-        |--------------------------------------------------------------------------
-        */
+            if ($all) {
 
-        if ($all) {
+                $users = $query->get();
 
-            $users = $query->get();
+                return response()->json([
+
+                    'success' => true,
+
+                    'data' => $users,
+
+                    'total' => $users->count(),
+
+                ]);
+
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | PAGINATION
+            |--------------------------------------------------------------------------
+            */
+
+            $users = $query->paginate($perPage);
 
             return response()->json([
 
                 'success' => true,
 
-                'data' => $users,
+                'data' => $users->items(),
 
-                'total' => $users->count(),
+                'pagination' => [
+
+                    'current_page' => $users->currentPage(),
+
+                    'last_page' => $users->lastPage(),
+
+                    'per_page' => $users->perPage(),
+
+                    'total' => $users->total(),
+
+                    'from' => $users->firstItem(),
+
+                    'to' => $users->lastItem(),
+
+                ],
 
             ]);
 
+        } catch (\Throwable $e) {
+
+            return response()->json([
+
+                'success' => false,
+
+                'message' => 'Erreur lors du chargement des utilisateurs.',
+
+                'error' => $e->getMessage(),
+
+            ], 500);
+
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | PAGINATION
-        |--------------------------------------------------------------------------
-        */
-
-        $users = $query->paginate($perPage);
-
-        return response()->json([
-
-            'success' => true,
-
-            'data' => $users->items(),
-
-            'pagination' => [
-
-                'current_page' => $users->currentPage(),
-
-                'last_page' => $users->lastPage(),
-
-                'per_page' => $users->perPage(),
-
-                'total' => $users->total(),
-
-                'from' => $users->firstItem(),
-
-                'to' => $users->lastItem(),
-
-            ],
-
-        ]);
-
-    } catch (\Throwable $e) {
-
-        return response()->json([
-
-            'success' => false,
-
-            'message' => 'Erreur lors du chargement des utilisateurs.',
-
-            'error' => $e->getMessage(),
-
-        ], 500);
-
     }
-}
 
     public function UpdateUsers(Request $request, $id)
     {
@@ -575,20 +575,22 @@ class UserController extends Controller
             })->count();
 
             /*
-            |--------------------------------------------------------------------------
-            | UTILISATEURS SANS MATERIEL
-            |--------------------------------------------------------------------------
-            */
+|--------------------------------------------------------------------------
+| UTILISATEURS (ROLE USER) SANS MATERIEL
+|--------------------------------------------------------------------------
+*/
 
-            $utilisateursSansMateriel = User::whereDoesntHave('attributions', function ($query) {
+            $usersSansMateriel = User::where('role', 'USER')
+                ->whereDoesntHave('attributions', function ($query) {
 
-                $query->whereIn('statut', [
-                    'ACTIVE',
-                    'EN_PANNE',
-                    'EN_MAINTENANCE',
-                ]);
+                    $query->whereIn('statut', [
+                        'ACTIVE',
+                        'EN_PANNE',
+                        'EN_MAINTENANCE',
+                    ]);
 
-            })->count();
+                })
+                ->count();
 
             /*
             |--------------------------------------------------------------------------
@@ -606,26 +608,26 @@ class UserController extends Controller
             */
 
             $utilisateursAvecPlusieursMateriels = User::whereHas('attributions', function ($q) {
-        $q->whereIn('statut', [
-            'ACTIVE',
-            'EN_PANNE',
-            'EN_MAINTENANCE'
-        ]);
-    })
-    ->withCount([
-        'attributions as materiels_actifs' => function ($q) {
-            $q->whereIn('statut', [
-                'ACTIVE',
-                'EN_PANNE',
-                'EN_MAINTENANCE'
-            ]);
-        }
-    ])
-    ->get()
-    ->filter(function ($user) {
-        return $user->materiels_actifs > 1;
-    })
-    ->count();
+                $q->whereIn('statut', [
+                    'ACTIVE',
+                    'EN_PANNE',
+                    'EN_MAINTENANCE',
+                ]);
+            })
+                ->withCount([
+                    'attributions as materiels_actifs' => function ($q) {
+                        $q->whereIn('statut', [
+                            'ACTIVE',
+                            'EN_PANNE',
+                            'EN_MAINTENANCE',
+                        ]);
+                    },
+                ])
+                ->get()
+                ->filter(function ($user) {
+                    return $user->materiels_actifs > 1;
+                })
+                ->count();
 
             /*
             |--------------------------------------------------------------------------
@@ -703,7 +705,7 @@ class UserController extends Controller
 
                         'avec_materiel' => $utilisateursAvecMateriel,
 
-                        'sans_materiel' => $utilisateursSansMateriel,
+                        'sans_materiel' => $usersSansMateriel,
 
                         'ayant_deja_possede' => $utilisateursHistorique,
 

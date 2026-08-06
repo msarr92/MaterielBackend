@@ -22,15 +22,17 @@ class AttributionController extends Controller
 
             $validator = Validator::make($request->all(), [
 
-                'materiel_id' => 'required|exists:materiels,id',
+                'materiels' => 'required|array|min:1',
+
+                'materiels.*.materiel_id' => 'required|exists:materiels,id',
+
+                'materiels.*.quantite' => 'nullable|integer|min:1',
 
                 'user_id' => 'required|exists:users,id',
 
                 'direction_id' => 'nullable|exists:directions,id',
 
                 'site_id' => 'nullable|exists:sites,id',
-
-                'quantite' => 'nullable|integer|min:1',
 
                 'date_fin' => 'nullable|date|after_or_equal:today',
 
@@ -64,209 +66,232 @@ class AttributionController extends Controller
             |--------------------------------------------------------------------------
             */
 
-            $materiel = Materiel::lockForUpdate()
-                ->find($request->materiel_id);
+            $attributions = [];
 
-            if (! $materiel) {
+            foreach ($request->materiels as $item) {
 
-                DB::rollBack();
+                $materiel = Materiel::lockForUpdate()
+                    ->find($item['materiel_id']);
 
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Matériel introuvable',
-                ], 404);
-
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | CAS EQUIPEMENT
-            |--------------------------------------------------------------------------
-            */
-
-            if ($materiel->categorie === 'EQUIPEMENT') {
-
-                if ($materiel->etat !== 'disponible') {
+                if (! $materiel) {
 
                     DB::rollBack();
 
                     return response()->json([
                         'success' => false,
-                        'message' => 'Cet équipement est indisponible.',
-                    ], 409);
+                        'message' => 'Matériel introuvable',
+                    ], 404);
 
                 }
 
                 /*
-                Vérifier attribution active
+                |--------------------------------------------------------------------------
+                | CAS EQUIPEMENT
+                |--------------------------------------------------------------------------
                 */
 
-                $exist = Attribution::where('materiel_id', $materiel->id)
-                    ->whereIn('statut', [
-                        'ACTIVE',
-                        'EN_PANNE',
-                        'EN_MAINTENANCE',
-                    ])
-                    ->exists();
+                if ($materiel->categorie === 'EQUIPEMENT') {
 
-                if ($exist) {
+                    if ($materiel->etat !== 'disponible') {
 
-                    DB::rollBack();
+                        DB::rollBack();
 
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Cet équipement est déjà attribué.',
-                    ], 409);
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Cet équipement est indisponible.',
+                        ], 409);
 
-                }
+                    }
 
-                $quantiteAttribuee = 1;
+                    /*
+                    Vérifier attribution active
+                    */
 
-            }
+                    $exist = Attribution::where('materiel_id', $materiel->id)
+                        ->whereIn('statut', [
+                            'ACTIVE',
+                            'EN_PANNE',
+                            'EN_MAINTENANCE',
+                        ])
+                        ->exists();
 
-            /*
-            |--------------------------------------------------------------------------
-            | CAS ACCESSOIRE
-            |--------------------------------------------------------------------------
-            */
+                    if ($exist) {
 
-            else {
+                        DB::rollBack();
 
-                $quantiteAttribuee = $request->quantite ?? 1;
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Cet équipement est déjà attribué.',
+                        ], 409);
 
-                if ($materiel->quantite < $quantiteAttribuee) {
+                    }
 
-                    DB::rollBack();
-
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Stock insuffisant.',
-                        'stock_disponible' => $materiel->quantite,
-                    ], 409);
+                    $quantiteAttribuee = 1;
 
                 }
 
-            }
+                /*
+                |--------------------------------------------------------------------------
+                | CAS ACCESSOIRE
+                |--------------------------------------------------------------------------
+                */
 
-            /*
-            |--------------------------------------------------------------------------
-            | Type action
-            |--------------------------------------------------------------------------
-            */
+                else {
 
-            $typeAction = Attribution::where(
-                'materiel_id',
-                $materiel->id
-            )->exists()
-                ? 'REAFFECTATION'
-                : 'ATTRIBUTION';
+                    $quantiteAttribuee = $request->quantite ?? 1;
 
-            /*
-            |--------------------------------------------------------------------------
-            | Création attribution
-            |--------------------------------------------------------------------------
-            */
+                    if ($materiel->quantite < $quantiteAttribuee) {
 
-            $attribution = Attribution::create([
+                        DB::rollBack();
 
-                'materiel_id' => $materiel->id,
+                        return response()->json([
+                            'success' => false,
+                            'message' => 'Stock insuffisant.',
+                            'stock_disponible' => $materiel->quantite,
+                        ], 409);
 
-                'user_id' => $request->user_id,
+                    }
 
-                'direction_id' => $request->direction_id,
+                }
 
-                'site_id' => $request->site_id,
+                /*
+                |--------------------------------------------------------------------------
+                | Type action
+                |--------------------------------------------------------------------------
+                */
 
-                'quantite' => $quantiteAttribuee,
+                $typeAction = Attribution::where(
+                    'materiel_id',
+                    $materiel->id
+                )->exists()
+                    ? 'REAFFECTATION'
+                    : 'ATTRIBUTION';
 
-                'date_debut' => now(),
+                /*
+                |--------------------------------------------------------------------------
+                | Création attribution
+                |--------------------------------------------------------------------------
+                */
 
-                'date_fin' => $request->date_fin,
+                $attribution = Attribution::create([
 
-                'statut' => 'ACTIVE',
+                    'materiel_id' => $materiel->id,
 
-                'type_action' => $typeAction,
+                    'user_id' => $request->user_id,
 
-                'created_by' => $connectedUser->id,
+                    'direction_id' => $request->direction_id,
 
-            ]);
+                    'site_id' => $request->site_id,
 
-            /*
-            |--------------------------------------------------------------------------
-            | Mise à jour matériel
-            |--------------------------------------------------------------------------
-            */
+                    'quantite' => $quantiteAttribuee,
 
-            if ($materiel->categorie === 'EQUIPEMENT') {
+                    'date_debut' => now(),
 
-                $materiel->update([
+                    'date_fin' => $request->date_fin,
 
-                    'etat' => 'attribue',
+                    'statut' => 'ACTIVE',
 
-                    'date_etat_change' => now(),
+                    'type_action' => $typeAction,
 
-                    'motif_etat' => $typeAction,
+                    'created_by' => $connectedUser->id,
 
                 ]);
 
-            } else {
-
                 /*
-                Diminution stock accessoire
+                |--------------------------------------------------------------------------
+                | Mise à jour matériel
+                |--------------------------------------------------------------------------
                 */
 
-                $materiel->decrement(
-                    'quantite',
-                    $quantiteAttribuee
-                );
+                if ($materiel->categorie === 'EQUIPEMENT') {
 
-                /*
-                Si stock épuisé
-                */
-
-                if ($materiel->quantite == 0) {
-
-                    $materiel->update([
+                    $dataUpdate = [
 
                         'etat' => 'attribue',
 
                         'date_etat_change' => now(),
 
-                    ]);
+                        'motif_etat' => $typeAction,
+
+                    ];
+
+                    /*
+                    |--------------------------------------------------------------------------
+                    | Première mise en service
+                    |--------------------------------------------------------------------------
+                    | On renseigne la date uniquement si le matériel
+                    | n'a jamais été mis en service.
+                    |--------------------------------------------------------------------------
+                    */
+
+                    if (! $materiel->date_mise_service) {
+
+                        $dataUpdate['date_mise_service'] = now();
+
+                    }
+
+                    $materiel->update($dataUpdate);
+
+                } else {
+
+                    /*
+                    Diminution stock accessoire
+                    */
+
+                    $materiel->decrement(
+                        'quantite',
+                        $quantiteAttribuee
+                    );
+
+                    /*
+                    Si stock épuisé
+                    */
+
+                    if ($materiel->quantite == 0) {
+
+                        $materiel->update([
+
+                            'etat' => 'attribue',
+
+                            'date_etat_change' => now(),
+
+                        ]);
+
+                    }
 
                 }
 
+                /*
+                |--------------------------------------------------------------------------
+                | Historique mouvement
+                |--------------------------------------------------------------------------
+                */
+
+                MouvementMateriel::create([
+
+                    'materiel_id' => $materiel->id,
+
+                    'user_id' => $request->user_id,
+
+                    'direction_id' => $request->direction_id,
+
+                    'type_mouvement' => $typeAction,
+
+                    'date_mouvement' => now(),
+
+                    'etat_materiel' => $materiel->etat,
+
+                    'quantite' => $quantiteAttribuee,
+
+                    'observation' => $materiel->categorie === 'ACCESSOIRE'
+                        ? 'Sortie stock accessoire'
+                        : 'Attribution équipement',
+
+                    'created_by' => $connectedUser->id,
+
+                ]);
+
             }
-
-            /*
-            |--------------------------------------------------------------------------
-            | Historique mouvement
-            |--------------------------------------------------------------------------
-            */
-
-            MouvementMateriel::create([
-
-                'materiel_id' => $materiel->id,
-
-                'user_id' => $request->user_id,
-
-                'direction_id' => $request->direction_id,
-
-                'type_mouvement' => $typeAction,
-
-                'date_mouvement' => now(),
-
-                'etat_materiel' => $materiel->etat,
-
-                'quantite' => $quantiteAttribuee,
-
-                'observation' => $materiel->categorie === 'ACCESSOIRE'
-                    ? 'Sortie stock accessoire'
-                    : 'Attribution équipement',
-
-                'created_by' => $connectedUser->id,
-
-            ]);
 
             DB::commit();
 
@@ -1248,293 +1273,232 @@ class AttributionController extends Controller
     }
 
     public function importerDocument(Request $request)
-{
-    DB::beginTransaction();
+    {
+        DB::beginTransaction();
 
-    try {
+        try {
 
+            /*
+            |--------------------------------------------------------------------------
+            | Validation
+            |--------------------------------------------------------------------------
+            */
 
-        /*
-        |--------------------------------------------------------------------------
-        | Validation
-        |--------------------------------------------------------------------------
-        */
+            $validator = Validator::make($request->all(), [
 
-        $validator = Validator::make($request->all(), [
+                'document' => [
+                    'required',
+                    'file',
+                    'mimes:pdf,jpg,jpeg,png',
+                    'max:10240',
+                ],
 
-            'document' => [
-                'required',
-                'file',
-                'mimes:pdf,jpg,jpeg,png',
-                'max:10240'
-            ],
+                'attribution_id' => [
+                    'nullable',
+                    'exists:attributions,id',
+                ],
 
+                'attributions' => [
+                    'nullable',
+                    'array',
+                ],
 
-            'attribution_id' => [
-                'nullable',
-                'exists:attributions,id'
-            ],
+                'attributions.*' => [
+                    'exists:attributions,id',
+                ],
 
+                'observation' => [
+                    'nullable',
+                    'string',
+                    'max:500',
+                ],
 
-            'attributions' => [
-                'nullable',
-                'array'
-            ],
+            ]);
 
+            if ($validator->fails()) {
 
-            'attributions.*' => [
-                'exists:attributions,id'
-            ],
+                return response()->json([
+                    'success' => false,
+                    'message' => $validator->errors()->first(),
+                ], 422);
 
+            }
 
-            'observation' => [
-                'nullable',
-                'string',
-                'max:500'
-            ]
+            /*
+            |--------------------------------------------------------------------------
+            | Récupération des attributions
+            |--------------------------------------------------------------------------
+            */
 
-        ]);
+            $attributionIds = [];
 
+            // Une seule attribution
 
-        if($validator->fails()){
+            if ($request->filled('attribution_id')) {
 
-            return response()->json([
-                'success'=>false,
-                'message'=>$validator->errors()->first()
-            ],422);
+                $attributionIds[] = $request->attribution_id;
 
-        }
+            }
 
+            // Plusieurs attributions
 
+            if ($request->filled('attributions')) {
 
-        /*
-        |--------------------------------------------------------------------------
-        | Récupération des attributions
-        |--------------------------------------------------------------------------
-        */
+                $attributionIds = array_merge(
+                    $attributionIds,
+                    $request->attributions
+                );
 
+            }
 
-        $attributionIds = [];
+            $attributionIds = array_unique($attributionIds);
 
+            if (count($attributionIds) == 0) {
 
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Aucune attribution sélectionnée.',
+                ], 422);
 
-        // Une seule attribution
+            }
 
-        if($request->filled('attribution_id')){
+            /*
+            |--------------------------------------------------------------------------
+            | Vérification des attributions
+            |--------------------------------------------------------------------------
+            */
 
-            $attributionIds[] = $request->attribution_id;
+            $attributions = Attribution::whereIn(
+                'id',
+                $attributionIds
+            )->get();
 
-        }
+            if ($attributions->count() != count($attributionIds)) {
 
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Une attribution est introuvable.',
+                ], 404);
 
+            }
 
-        // Plusieurs attributions
+            /*
+            |--------------------------------------------------------------------------
+            | Upload document
+            |--------------------------------------------------------------------------
+            */
 
-        if($request->filled('attributions')){
+            $file = $request->file('document');
 
-            $attributionIds = array_merge(
-                $attributionIds,
-                $request->attributions
+            $nomFichier =
+                time().'_'.$file->getClientOriginalName();
+
+            $chemin = $file->storeAs(
+                'documents/attributions',
+                $nomFichier,
+                'public'
             );
 
-        }
+            /*
+            |--------------------------------------------------------------------------
+            | Génération numéro document
+            |--------------------------------------------------------------------------
+            */
 
+            $annee = date('Y');
 
+            $compteur = Document::whereYear(
+                'created_at',
+                $annee
+            )->count() + 1;
 
-        $attributionIds = array_unique($attributionIds);
+            $numeroDocument =
+                'DOC-'.
+                date('Ymd').
+                '-'.
+                str_pad(
+                    $compteur,
+                    5,
+                    '0',
+                    STR_PAD_LEFT
+                );
 
+            /*
+            |--------------------------------------------------------------------------
+            | Création document
+            |--------------------------------------------------------------------------
+            */
 
+            $document = Document::create([
 
-        if(count($attributionIds)==0){
+                'numero_document' => $numeroDocument,
+
+                'type_document' => 'FICHE_DEPLACEMENT',
+
+                'fichier_scan' => $chemin,
+
+                'date_generation' => now(),
+
+                'date_televersement' => now(),
+
+                'created_by' => auth()->id(),
+
+                'observation' => $request->observation,
+
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Liaison document -> attributions
+            |--------------------------------------------------------------------------
+            |
+            | Ici on met le document_id dans chaque attribution
+            |
+            */
+
+            Attribution::whereIn(
+                'id',
+                $attributionIds
+            )
+                ->update([
+
+                    'document_id' => $document->id,
+
+                ]);
+
+            DB::commit();
 
             return response()->json([
-                'success'=>false,
-                'message'=>'Aucune attribution sélectionnée.'
-            ],422);
 
-        }
+                'success' => true,
 
+                'message' => 'Document importé avec succès.',
 
+                'data' => $document->load([
 
+                    'attributions.user',
+                    'attributions.direction',
+                    'attributions.site',
+                    'attributions.materiel',
 
-        /*
-        |--------------------------------------------------------------------------
-        | Vérification des attributions
-        |--------------------------------------------------------------------------
-        */
+                ]),
 
+            ]);
 
-        $attributions = Attribution::whereIn(
-            'id',
-            $attributionIds
-        )->get();
+        } catch (\Throwable $e) {
 
-
-
-        if($attributions->count() != count($attributionIds)){
-
+            DB::rollBack();
 
             return response()->json([
-                'success'=>false,
-                'message'=>'Une attribution est introuvable.'
-            ],404);
+
+                'success' => false,
+
+                'message' => 'Erreur lors de l’import.',
+
+                'error' => $e->getMessage(),
+
+            ], 500);
 
         }
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Upload document
-        |--------------------------------------------------------------------------
-        */
-
-
-        $file = $request->file('document');
-
-
-        $nomFichier =
-            time().'_'.$file->getClientOriginalName();
-
-
-
-        $chemin = $file->storeAs(
-            'documents/attributions',
-            $nomFichier,
-            'public'
-        );
-
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Génération numéro document
-        |--------------------------------------------------------------------------
-        */
-
-
-        $annee = date('Y');
-
-        $compteur = Document::whereYear(
-            'created_at',
-            $annee
-        )->count()+1;
-
-
-
-        $numeroDocument =
-            'DOC-'.
-            date('Ymd').
-            '-'.
-            str_pad(
-                $compteur,
-                5,
-                '0',
-                STR_PAD_LEFT
-            );
-
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Création document
-        |--------------------------------------------------------------------------
-        */
-
-
-        $document = Document::create([
-
-
-            'numero_document'=>$numeroDocument,
-
-
-            'type_document'=>'FICHE_DEPLACEMENT',
-
-
-            'fichier_scan'=>$chemin,
-
-
-            'date_generation'=>now(),
-
-
-            'date_televersement'=>now(),
-
-
-            'created_by'=>auth()->id(),
-
-
-            'observation'=>$request->observation
-
-        ]);
-
-
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Liaison document -> attributions
-        |--------------------------------------------------------------------------
-        |
-        | Ici on met le document_id dans chaque attribution
-        |
-        */
-
-
-        Attribution::whereIn(
-            'id',
-            $attributionIds
-        )
-        ->update([
-
-            'document_id'=>$document->id
-
-        ]);
-
-
-
-
-        DB::commit();
-
-
-
-        return response()->json([
-
-            'success'=>true,
-
-            'message'=>'Document importé avec succès.',
-
-            'data'=>$document->load([
-
-                'attributions.user',
-                'attributions.direction',
-                'attributions.site',
-                'attributions.materiel'
-
-            ])
-
-        ]);
-
-
-
-    }catch(\Throwable $e){
-
-
-        DB::rollBack();
-
-
-        return response()->json([
-
-            'success'=>false,
-
-            'message'=>'Erreur lors de l’import.',
-
-            'error'=>$e->getMessage()
-
-        ],500);
-
     }
-}
 }

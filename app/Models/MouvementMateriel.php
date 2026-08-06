@@ -43,6 +43,11 @@ class MouvementMateriel extends Model
         return $this->belongsTo(Direction::class);
     }
 
+    public function site()
+{
+    return $this->belongsTo(Site::class);
+}
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
