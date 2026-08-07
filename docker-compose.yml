@@ -1,4 +1,35 @@
 services:
+
+  postgres:
+    image: postgres:16-alpine
+
+    container_name: materiel_postgres
+
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-bd_materiel_onas}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+
+    ports:
+      - "5433:5432"
+
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_DATABASE:-bd_materiel_onas}"
+        ]
+
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+
   app:
     build:
       context: .
@@ -14,34 +45,18 @@ services:
     env_file:
       - .env.docker
 
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-
-    volumes:
-      - laravel_storage:/var/www/html/storage
-
-  queue:
-    build:
-      context: .
-      dockerfile: Dockerfile
-
-    container_name: materiel_queue
-
-    restart: unless-stopped
-
-    command: php artisan queue:work --sleep=3 --tries=3 --timeout=120
-
-    env_file:
-      - .env.docker
-
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+    environment:
+      DB_HOST: postgres
+      DB_PORT: 5432
 
     depends_on:
-      - app
+      postgres:
+        condition: service_healthy
 
     volumes:
       - laravel_storage:/var/www/html/storage
 
+
 volumes:
+  postgres_data:
   laravel_storage:
