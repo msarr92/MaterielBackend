@@ -1,0 +1,47 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: materiel_backend
+
+    restart: unless-stopped
+
+    ports:
+      - "8000:8000"
+
+    env_file:
+      - .env.docker
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    volumes:
+      - laravel_storage:/var/www/html/storage
+
+  queue:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    container_name: materiel_queue
+
+    restart: unless-stopped
+
+    command: php artisan queue:work --sleep=3 --tries=3 --timeout=120
+
+    env_file:
+      - .env.docker
+
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+    depends_on:
+      - app
+
+    volumes:
+      - laravel_storage:/var/www/html/storage
+
+volumes:
+  laravel_storage:
