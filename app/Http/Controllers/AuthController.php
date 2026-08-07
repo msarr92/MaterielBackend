@@ -13,225 +13,223 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 
 class AuthController extends Controller
 {
-   public function register(Request $request)
-{
-    try {
-
-        /*
-        |--------------------------------------------------------------------------
-        | VALIDATION
-        |--------------------------------------------------------------------------
-        */
-
-        $request->validate([
-
-            'username' => [
-                'required',
-                'string',
-                'min:3',
-                'max:80',
-                'regex:/^[A-Za-z0-9._-]+$/',
-                'unique:users,username',
-            ],
-
-            'nom' => [
-                'required',
-                'string',
-                'max:120',
-            ],
-
-            'prenom' => [
-                'required',
-                'string',
-                'max:120',
-            ],
-
-            'role' => [
-                'required',
-                'in:ADMIN,GESTIONNAIRE,USER',
-            ],
-
-            /*
-            |--------------------------------------------------------------------------
-            | USER
-            |--------------------------------------------------------------------------
-            */
-
-            'direction_id' => [
-                'required_if:role,USER',
-                'nullable',
-                'exists:directions,id',
-            ],
-
-            'site_id' => [
-                'required_if:role,USER',
-                'nullable',
-                'exists:sites,id',
-            ],
-
-            /*
-            |--------------------------------------------------------------------------
-            | ADMIN / GESTIONNAIRE
-            |--------------------------------------------------------------------------
-            */
-
-            'password' => [
-                'required_if:role,ADMIN,GESTIONNAIRE',
-                'nullable',
-                'string',
-                'min:6',
-                'max:128',
-            ],
-
-        ]);
-
-        /*
-        |--------------------------------------------------------------------------
-        | GENERATION MATRICULE
-        |--------------------------------------------------------------------------
-        */
-
-        $year = now()->year;
-
-        $lastUser = User::latest('id')->first();
-
-        $nextId = $lastUser ? $lastUser->id + 1 : 1;
-
-        $matricule = 'ONAS-' . $year . '-' . str_pad($nextId, 4, '0', STR_PAD_LEFT);
-
-        /*
-        |--------------------------------------------------------------------------
-        | PASSWORD
-        |--------------------------------------------------------------------------
-        | USER -> mot de passe aléatoire
-        | ADMIN/GESTIONNAIRE -> mot de passe fourni
-        |--------------------------------------------------------------------------
-        */
-
-        if ($request->role === 'USER') {
-
-            $password = bcrypt(Str::random(20));
-
-        } else {
-
-            $password = bcrypt($request->password);
-
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | CREATION UTILISATEUR
-        |--------------------------------------------------------------------------
-        */
-
-        $user = User::create([
-
-            'matricule' => $matricule,
-
-            'username' => $request->username,
-
-            'nom' => $request->nom,
-
-            'prenom' => $request->prenom,
-
-            'role' => $request->role,
-
-            'password' => $password,
-
-            'direction_id' => $request->direction_id,
-
-            'site_id' => $request->site_id,
-
-            'actif' => true,
-
-        ]);
-
-        /*
-        |--------------------------------------------------------------------------
-        | CACHE
-        |--------------------------------------------------------------------------
-        */
-
-        Cache::put(
-            'user_' . $user->id,
-            $user,
-            now()->addHour()
-        );
-
-        /*
-        |--------------------------------------------------------------------------
-        | KAFKA (OPTIONNEL)
-        |--------------------------------------------------------------------------
-        */
-
+    public function register(Request $request)
+    {
         try {
 
-            if (class_exists(Kafka::class)) {
+            /*
+            |--------------------------------------------------------------------------
+            | VALIDATION
+            |--------------------------------------------------------------------------
+            */
 
-                Kafka::publishOn('auth-events')
-                    ->withBody([
+            $request->validate([
 
-                        'event' => 'USER_REGISTERED',
+                'username' => [
+                    'required',
+                    'string',
+                    'min:3',
+                    'max:80',
+                    'regex:/^[A-Za-z0-9._-]+$/',
+                    'unique:users,username',
+                ],
 
-                        'user_id' => $user->id,
+                'nom' => [
+                    'required',
+                    'string',
+                    'max:120',
+                ],
 
-                        'matricule' => $user->matricule,
+                'prenom' => [
+                    'required',
+                    'string',
+                    'max:120',
+                ],
 
-                        'role' => $user->role,
+                'role' => [
+                    'required',
+                    'in:ADMIN,GESTIONNAIRE,USER',
+                ],
 
-                        'timestamp' => now(),
+                /*
+                |--------------------------------------------------------------------------
+                | USER
+                |--------------------------------------------------------------------------
+                */
 
-                    ])
-                    ->send();
+                'direction_id' => [
+                    'required_if:role,USER',
+                    'nullable',
+                    'exists:directions,id',
+                ],
+
+                'site_id' => [
+                    'required_if:role,USER',
+                    'nullable',
+                    'exists:sites,id',
+                ],
+
+                /*
+                |--------------------------------------------------------------------------
+                | ADMIN / GESTIONNAIRE
+                |--------------------------------------------------------------------------
+                */
+
+                'password' => [
+                    'required_if:role,ADMIN,GESTIONNAIRE',
+                    'nullable',
+                    'string',
+                    'min:6',
+                    'max:128',
+                ],
+
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | GENERATION MATRICULE
+            |--------------------------------------------------------------------------
+            */
+
+            $year = now()->year;
+
+            $lastUser = User::latest('id')->first();
+
+            $nextId = $lastUser ? $lastUser->id + 1 : 1;
+
+            $matricule = 'ONAS-'.$year.'-'.str_pad($nextId, 4, '0', STR_PAD_LEFT);
+
+            /*
+            |--------------------------------------------------------------------------
+            | PASSWORD
+            |--------------------------------------------------------------------------
+            | USER -> mot de passe aléatoire
+            | ADMIN/GESTIONNAIRE -> mot de passe fourni
+            |--------------------------------------------------------------------------
+            */
+
+            if ($request->role === 'USER') {
+
+                $password = bcrypt(Str::random(20));
+
+            } else {
+
+                $password = bcrypt($request->password);
 
             }
 
+            /*
+            |--------------------------------------------------------------------------
+            | CREATION UTILISATEUR
+            |--------------------------------------------------------------------------
+            */
+
+            $user = User::create([
+
+                'matricule' => $matricule,
+
+                'username' => $request->username,
+
+                'nom' => $request->nom,
+
+                'prenom' => $request->prenom,
+
+                'role' => $request->role,
+
+                'password' => $password,
+
+                'direction_id' => $request->direction_id,
+
+                'site_id' => $request->site_id,
+
+                'actif' => true,
+
+            ]);
+
+            /*
+            |--------------------------------------------------------------------------
+            | CACHE
+            |--------------------------------------------------------------------------
+            */
+
+            Cache::put(
+                'user_'.$user->id,
+                $user,
+                now()->addHour()
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | KAFKA (OPTIONNEL)
+            |--------------------------------------------------------------------------
+            */
+
+            try {
+
+                if (class_exists(Kafka::class)) {
+
+                    Kafka::publishOn('auth-events')
+                        ->withBody([
+
+                            'event' => 'USER_REGISTERED',
+
+                            'user_id' => $user->id,
+
+                            'matricule' => $user->matricule,
+
+                            'role' => $user->role,
+
+                            'timestamp' => now(),
+
+                        ])
+                        ->send();
+
+                }
+
+            } catch (\Throwable $e) {
+
+                // Ne bloque pas la création
+
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | JWT UNIQUEMENT ADMIN/GESTIONNAIRE
+            |--------------------------------------------------------------------------
+            */
+
+            /*
+            |--------------------------------------------------------------------------
+            | REPONSE
+            |--------------------------------------------------------------------------
+            */
+
+            return response()->json([
+
+                'success' => true,
+
+                'message' => 'Utilisateur créé avec succès.',
+
+                'user' => $user->load(['direction', 'site']),
+
+                // 'token' => $token,
+
+            ], 201);
+
         } catch (\Throwable $e) {
 
-            // Ne bloque pas la création
+            return response()->json([
+
+                'success' => false,
+
+                'message' => 'Erreur lors de la création de l\'utilisateur.',
+
+                'error' => $e->getMessage(),
+
+            ], 500);
 
         }
-
-        /*
-        |--------------------------------------------------------------------------
-        | JWT UNIQUEMENT ADMIN/GESTIONNAIRE
-        |--------------------------------------------------------------------------
-        */
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | REPONSE
-        |--------------------------------------------------------------------------
-        */
-
-        return response()->json([
-
-            'success' => true,
-
-            'message' => 'Utilisateur créé avec succès.',
-
-            'user' => $user->load(['direction', 'site']),
-
-            //'token' => $token,
-
-        ], 201);
-
-    } catch (\Throwable $e) {
-
-        return response()->json([
-
-            'success' => false,
-
-            'message' => 'Erreur lors de la création de l\'utilisateur.',
-
-            'error' => $e->getMessage(),
-
-        ], 500);
-
     }
-}
 
     public function login(Request $request)
     {
@@ -254,11 +252,6 @@ class AuthController extends Controller
         $user = User::where('username', $request->username)->first();
 
         if (! $user || ! Hash::check($request->password, $user->password)) {
-
-            // incrémenter tentatives dans Redis
-            Cache::increment($key);
-            Cache::put($key, Cache::get($key, 0), now()->addMinutes(10));
-
             return response()->json([
                 'message' => 'Identifiants incorrects',
             ], 401);
@@ -381,139 +374,119 @@ class AuthController extends Controller
                 'event' => 'required|string',
                 'details' => 'nullable|array',
                 'timestamp' => 'nullable|string',
-                'user' => 'nullable|string'
+                'user' => 'nullable|string',
             ]);
-
 
             return response()->json([
                 'success' => true,
-                'message' => 'Log enregistré'
+                'message' => 'Log enregistré',
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'success' => false,
-                'message' => 'Erreur lors de l\'enregistrement du log'
+                'message' => 'Erreur lors de l\'enregistrement du log',
             ], 500);
         }
     }
 
     public function refreshToken(Request $request)
-{
-    try {
+    {
+        try {
 
-        /*
-        |--------------------------------------------------------------------------
-        | Récupérer le token actuel
-        |--------------------------------------------------------------------------
-        */
+            /*
+            |--------------------------------------------------------------------------
+            | Récupérer le token actuel
+            |--------------------------------------------------------------------------
+            */
 
-        $token = JWTAuth::getToken();
+            $token = JWTAuth::getToken();
 
+            if (! $token) {
 
-        if (!$token) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Token manquant.',
+                ], 401);
+
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Rafraîchir le token
+            |--------------------------------------------------------------------------
+            */
+
+            $newToken = JWTAuth::refresh($token);
+
+            /*
+            |--------------------------------------------------------------------------
+            | Récupérer l'utilisateur connecté
+            |--------------------------------------------------------------------------
+            */
+
+            $user = JWTAuth::setToken($newToken)
+                ->authenticate();
+
+            if (! $user) {
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Utilisateur introuvable.',
+                ], 404);
+
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | Mettre à jour le cache Redis
+            |--------------------------------------------------------------------------
+            */
+
+            Cache::put(
+                'user:'.$user->id,
+                $user,
+                3600
+            );
+
+            /*
+            |--------------------------------------------------------------------------
+            | Réponse
+            |--------------------------------------------------------------------------
+            */
 
             return response()->json([
+
+                'success' => true,
+
+                'message' => 'Token renouvelé avec succès.',
+
+                'token' => $newToken,
+
+                'user' => $user,
+
+            ], 200);
+
+        } catch (JWTException $e) {
+
+            return response()->json([
+
                 'success' => false,
-                'message' => 'Token manquant.'
+
+                'message' => 'Impossible de renouveler le token.',
+
             ], 401);
 
-        }
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Rafraîchir le token
-        |--------------------------------------------------------------------------
-        */
-
-        $newToken = JWTAuth::refresh($token);
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Récupérer l'utilisateur connecté
-        |--------------------------------------------------------------------------
-        */
-
-        $user = JWTAuth::setToken($newToken)
-            ->authenticate();
-
-
-
-        if (!$user) {
+        } catch (\Throwable $e) {
 
             return response()->json([
-                'success'=>false,
-                'message'=>'Utilisateur introuvable.'
-            ],404);
+
+                'success' => false,
+
+                'message' => 'Erreur serveur lors du refresh token.',
+
+            ], 500);
 
         }
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Mettre à jour le cache Redis
-        |--------------------------------------------------------------------------
-        */
-
-        Cache::put(
-            'user:'.$user->id,
-            $user,
-            3600
-        );
-
-
-
-        /*
-        |--------------------------------------------------------------------------
-        | Réponse
-        |--------------------------------------------------------------------------
-        */
-
-        return response()->json([
-
-            'success'=>true,
-
-            'message'=>'Token renouvelé avec succès.',
-
-            'token'=>$newToken,
-
-            'user'=>$user,
-
-        ],200);
-
-
-
-    } catch (JWTException $e) {
-
-
-        return response()->json([
-
-            'success'=>false,
-
-            'message'=>'Impossible de renouveler le token.',
-
-
-        ],401);
-
-
-    } catch(\Throwable $e){
-
-
-        return response()->json([
-
-            'success'=>false,
-
-            'message'=>'Erreur serveur lors du refresh token.',
-
-
-        ],500);
-
     }
-}
-
 }
