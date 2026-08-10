@@ -2,11 +2,14 @@
 
 namespace App\Http\Controllers;
 
+use App\Models\Direction;
+use App\Models\Site;
 use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Str;
+use Illuminate\Validation\ValidationException;
 use Junges\Kafka\Facades\Kafka;
 use Tymon\JWTAuth\Exceptions\JWTException;
 use Tymon\JWTAuth\Facades\JWTAuth;
@@ -14,222 +17,346 @@ use Tymon\JWTAuth\Facades\JWTAuth;
 class AuthController extends Controller
 {
     public function register(Request $request)
-    {
-        try {
+{
+    try {
+
+        /*
+        |--------------------------------------------------------------------------
+        | UTILISATEUR CONNECTÉ
+        |--------------------------------------------------------------------------
+        */
+
+        $authUser = auth('api')->user();
+
+        if (! $authUser) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Utilisateur non authentifié.',
+            ], 401);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | ADMIN UNIQUEMENT
+        |--------------------------------------------------------------------------
+        */
+
+        if ($authUser->role !== 'ADMIN') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Accès refusé. Seul un administrateur peut créer un utilisateur.',
+            ], 403);
+        }
+
+        /*
+        |--------------------------------------------------------------------------
+        | VALIDATION
+        |--------------------------------------------------------------------------
+        */
+
+        $validated = $request->validate([
+
+            'username' => [
+                'required',
+                'string',
+                'min:3',
+                'max:80',
+                'regex:/^[A-Za-z0-9._-]+$/',
+                'unique:users,username',
+            ],
+
+            'nom' => [
+                'required',
+                'string',
+                'max:120',
+            ],
+
+            'prenom' => [
+                'required',
+                'string',
+                'max:120',
+            ],
+
+            'role' => [
+                'required',
+                'in:ADMIN,GESTIONNAIRE,USER',
+            ],
 
             /*
             |--------------------------------------------------------------------------
-            | VALIDATION
+            | USER
             |--------------------------------------------------------------------------
             */
 
-            $request->validate([
+            'direction_id' => [
+                'required_if:role,USER',
+                'nullable',
+                'integer',
+                'exists:directions,id',
+            ],
 
-                'username' => [
-                    'required',
-                    'string',
-                    'min:3',
-                    'max:80',
-                    'regex:/^[A-Za-z0-9._-]+$/',
-                    'unique:users,username',
-                ],
-
-                'nom' => [
-                    'required',
-                    'string',
-                    'max:120',
-                ],
-
-                'prenom' => [
-                    'required',
-                    'string',
-                    'max:120',
-                ],
-
-                'role' => [
-                    'required',
-                    'in:ADMIN,GESTIONNAIRE,USER',
-                ],
-
-                /*
-                |--------------------------------------------------------------------------
-                | USER
-                |--------------------------------------------------------------------------
-                */
-
-                'direction_id' => [
-                    'required_if:role,USER',
-                    'nullable',
-                    'exists:directions,id',
-                ],
-
-                'site_id' => [
-                    'required_if:role,USER',
-                    'nullable',
-                    'exists:sites,id',
-                ],
-
-                /*
-                |--------------------------------------------------------------------------
-                | ADMIN / GESTIONNAIRE
-                |--------------------------------------------------------------------------
-                */
-
-                'password' => [
-                    'required_if:role,ADMIN,GESTIONNAIRE',
-                    'nullable',
-                    'string',
-                    'min:6',
-                    'max:128',
-                ],
-
-            ]);
+            'site_id' => [
+                'required_if:role,USER',
+                'nullable',
+                'integer',
+                'exists:sites,id',
+            ],
 
             /*
             |--------------------------------------------------------------------------
-            | GENERATION MATRICULE
+            | ADMIN / GESTIONNAIRE
             |--------------------------------------------------------------------------
             */
 
-            $year = now()->year;
+            'password' => [
+                'required_if:role,ADMIN,GESTIONNAIRE',
+                'nullable',
+                'string',
+                'min:6',
+                'max:128',
+            ],
+        ]);
 
-            $lastUser = User::latest('id')->first();
+        /*
+        |--------------------------------------------------------------------------
+        | GENERATION MATRICULE
+        |--------------------------------------------------------------------------
+        */
 
-            $nextId = $lastUser ? $lastUser->id + 1 : 1;
+        $year = now()->year;
 
-            $matricule = 'ONAS-'.$year.'-'.str_pad($nextId, 4, '0', STR_PAD_LEFT);
+        $lastUserId = User::max('id');
 
-            /*
-            |--------------------------------------------------------------------------
-            | PASSWORD
-            |--------------------------------------------------------------------------
-            | USER -> mot de passe aléatoire
-            | ADMIN/GESTIONNAIRE -> mot de passe fourni
-            |--------------------------------------------------------------------------
-            */
+        $nextId = $lastUserId
+            ? $lastUserId + 1
+            : 1;
 
-            if ($request->role === 'USER') {
-
-                $password = bcrypt(Str::random(20));
-
-            } else {
-
-                $password = bcrypt($request->password);
-
-            }
-
-            /*
-            |--------------------------------------------------------------------------
-            | CREATION UTILISATEUR
-            |--------------------------------------------------------------------------
-            */
-
-            $user = User::create([
-
-                'matricule' => $matricule,
-
-                'username' => $request->username,
-
-                'nom' => $request->nom,
-
-                'prenom' => $request->prenom,
-
-                'role' => $request->role,
-
-                'password' => $password,
-
-                'direction_id' => $request->direction_id,
-
-                'site_id' => $request->site_id,
-
-                'actif' => true,
-
-            ]);
-
-            /*
-            |--------------------------------------------------------------------------
-            | CACHE
-            |--------------------------------------------------------------------------
-            */
-
-            Cache::put(
-                'user_'.$user->id,
-                $user,
-                now()->addHour()
+        $matricule =
+            'ONAS-'
+            .$year
+            .'-'
+            .str_pad(
+                $nextId,
+                4,
+                '0',
+                STR_PAD_LEFT
             );
 
+        /*
+        |--------------------------------------------------------------------------
+        | VALEURS PAR DEFAUT
+        |--------------------------------------------------------------------------
+        */
+
+        $directionId = null;
+        $siteId = null;
+
+        $directionLibelle = null;
+        $siteLibelle = null;
+
+        $temporaryPassword = null;
+
+        /*
+        |--------------------------------------------------------------------------
+        | TRAITEMENT SELON LE ROLE
+        |--------------------------------------------------------------------------
+        */
+
+        if ($validated['role'] === 'USER') {
+
             /*
             |--------------------------------------------------------------------------
-            | KAFKA (OPTIONNEL)
+            | USER
             |--------------------------------------------------------------------------
             */
 
-            try {
+            $direction = Direction::find(
+                $validated['direction_id']
+            );
 
-                if (class_exists(Kafka::class)) {
+            $site = Site::find(
+                $validated['site_id']
+            );
 
-                    Kafka::publishOn('auth-events')
-                        ->withBody([
-
-                            'event' => 'USER_REGISTERED',
-
-                            'user_id' => $user->id,
-
-                            'matricule' => $user->matricule,
-
-                            'role' => $user->role,
-
-                            'timestamp' => now(),
-
-                        ])
-                        ->send();
-
-                }
-
-            } catch (\Throwable $e) {
-
-                // Ne bloque pas la création
-
+            if (! $direction) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Direction introuvable.',
+                ], 422);
             }
 
-            /*
-            |--------------------------------------------------------------------------
-            | JWT UNIQUEMENT ADMIN/GESTIONNAIRE
-            |--------------------------------------------------------------------------
-            */
+            if (! $site) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Site introuvable.',
+                ], 422);
+            }
+
+            $directionId = $direction->id;
+            $siteId = $site->id;
 
             /*
             |--------------------------------------------------------------------------
-            | REPONSE
+            | ATTENTION AUX NOMS DES COLONNES
+            |--------------------------------------------------------------------------
+            |
+            | Si ta table directions utilise "libelle",
+            | garde $direction->libelle.
+            |
+            | Si elle utilise "nom",
+            | remplace par $direction->nom.
+            |
             |--------------------------------------------------------------------------
             */
 
-            return response()->json([
+            $directionLibelle =
+                $direction->libelle
+                ?? $direction->nom
+                ?? null;
 
-                'success' => true,
+            $siteLibelle =
+                $site->libelle
+                ?? $site->nom
+                ?? null;
 
-                'message' => 'Utilisateur créé avec succès.',
+            /*
+            |--------------------------------------------------------------------------
+            | MOT DE PASSE TEMPORAIRE
+            |--------------------------------------------------------------------------
+            */
 
-                'user' => $user->load(['direction', 'site']),
+            $temporaryPassword =
+                Str::random(20);
 
-                // 'token' => $token,
+            $plainPassword =
+                $temporaryPassword;
 
-            ], 201);
+        } else {
 
-        } catch (\Throwable $e) {
+            /*
+            |--------------------------------------------------------------------------
+            | ADMIN / GESTIONNAIRE
+            |--------------------------------------------------------------------------
+            |
+            | Pas de direction/site.
+            | Mot de passe obligatoire fourni par l'administrateur.
+            |
+            |--------------------------------------------------------------------------
+            */
 
-            return response()->json([
-
-                'success' => false,
-
-                'message' => 'Erreur lors de la création de l\'utilisateur.',
-
-                'error' => $e->getMessage(),
-
-            ], 500);
-
+            $plainPassword =
+                $validated['password'];
         }
+
+        /*
+        |--------------------------------------------------------------------------
+        | CREATION
+        |--------------------------------------------------------------------------
+        */
+
+        $user = User::create([
+
+            'matricule' =>
+                $matricule,
+
+            'username' =>
+                $validated['username'],
+
+            'nom' =>
+                $validated['nom'],
+
+            'prenom' =>
+                $validated['prenom'],
+
+            'password' =>
+                Hash::make(
+                    $plainPassword
+                ),
+
+            'role' =>
+                $validated['role'],
+
+            'direction_id' =>
+                $directionId,
+
+            'site_id' =>
+                $siteId,
+
+            'direction_libelle' =>
+                $directionLibelle,
+
+            'site_libelle' =>
+                $siteLibelle,
+
+            'actif' =>
+                true,
+        ]);
+
+        /*
+        |--------------------------------------------------------------------------
+        | REPONSE
+        |--------------------------------------------------------------------------
+        */
+
+        $response = [
+
+            'success' => true,
+
+            'message' =>
+                'Utilisateur créé avec succès.',
+
+            'user' => $user->load([
+                'direction',
+                'site',
+            ]),
+        ];
+
+        /*
+        |--------------------------------------------------------------------------
+        | MOT DE PASSE TEMPORAIRE DU USER
+        |--------------------------------------------------------------------------
+        */
+
+        if ($validated['role'] === 'USER') {
+
+            $response['temporary_password'] =
+                $temporaryPassword;
+        }
+
+        return response()->json(
+            $response,
+            201
+        );
+
+    } catch (
+        ValidationException $e
+    ) {
+
+        return response()->json([
+
+            'success' => false,
+
+            'message' =>
+                'Les données fournies sont invalides.',
+
+            'errors' =>
+                $e->errors(),
+
+        ], 422);
+
+    } catch (\Throwable $e) {
+
+        return response()->json([
+
+            'success' => false,
+
+            'message' =>
+                'Erreur lors de la création de l\'utilisateur.',
+
+
+        ], 500);
     }
+}
 
     public function login(Request $request)
     {
