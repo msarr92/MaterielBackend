@@ -9,6 +9,7 @@ use App\Http\Controllers\DirectionController;
 use App\Http\Controllers\DocumentController;
 use App\Http\Controllers\MaterielController;
 use App\Http\Controllers\MouvementMaterielController;
+use App\Http\Controllers\SiteController;
 use App\Http\Controllers\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -159,5 +160,19 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/mouvements/export/pdf', [MouvementMaterielController::class, 'exportHistoriquePDF']);
 
     Route::get('/mouvements/statistiques', [MouvementMaterielController::class, 'statistiquesHistorique']);
+
+});
+
+
+//SiteController
+Route::middleware(['auth:api','role:ADMIN'])->group(function () {
+
+    Route::post('/sites',[SiteController::class, 'storeSite']);
+
+    Route::put('/sites/{id}',[SiteController::class, 'updateSite']);
+
+    Route::delete('/sites/{id}',[SiteController::class, 'deleteSite']);
+
+    Route::get('/sites/statistiques',[SiteController::class, 'statistiques']);
 
 });

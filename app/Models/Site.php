@@ -13,6 +13,6 @@ class Site extends Model
 
     public function users()
     {
-        return $this->hasMany(User::class);
+        return $this->hasMany(User::class, 'site_id');
     }
 }
