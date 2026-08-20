@@ -748,8 +748,7 @@ class AttributionController extends Controller
                         ->orWhereHas('user', function ($u) use ($search) {
 
                             $u->where('nom', 'like', "%{$search}%")
-                                ->orWhere('prenom', 'like', "%{$search}%")
-                                ->orWhere('email', 'like', "%{$search}%");
+                                ->orWhere('prenom', 'like', "%{$search}%");
 
                         })
                         ->orWhereHas('direction', function ($d) use ($search) {

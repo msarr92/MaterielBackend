@@ -70,7 +70,7 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/materiels/{id}', [MaterielController::class, 'deleteMateriel']);
     Route::put('/materiels/{id}/valider', [MaterielController::class, 'ValiderMateriel']);
     Route::get('/acquisitions/{id}/continuer-saisie', [MaterielController::class, 'continuerSaisieMateriel']);
-     Route::patch('/materiels/{id}/mettre-au-rebut',[MaterielController::class, 'mettreAuRebut']);
+    Route::patch('/materiels/{id}/mettre-au-rebut',[MaterielController::class, 'mettreAuRebut']);
 });
 
 // AttributionController

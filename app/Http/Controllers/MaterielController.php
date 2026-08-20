@@ -335,115 +335,89 @@ class MaterielController extends Controller
     }
 
     public function AjoutMaterielBrouillon(Request $request)
-    {
-        try {
+{
+    try {
+        $validator = Validator::make($request->all(), [
+            'categorie' => [
+                'required',
+                Rule::in([
+                    'EQUIPEMENT',
+                    'ACCESSOIRE',
+                ]),
+            ],
+            'type_materiel' => 'nullable|string|max:100',
+            'numero_serie' => 'nullable|string|max:100',
+            'marque' => 'nullable|string|max:100',
+            'modele' => 'nullable|string|max:100',
+            'quantite' => 'nullable|integer|min:1',
+            'observation_materiel' => 'nullable|string',
+            'acquisition_id' => 'required|exists:acquisitions,id', // ✅ Rendre acquisition_id obligatoire
+        ]);
 
-            $validator = Validator::make($request->all(), [
-
-                'categorie' => [
-                    'required',
-                    Rule::in([
-                        'EQUIPEMENT',
-                        'ACCESSOIRE',
-                    ]),
-                ],
-
-                'type_materiel' => 'nullable|string|max:100',
-
-                'numero_serie' => 'nullable|string|max:100',
-
-                'marque' => 'nullable|string|max:100',
-
-                'modele' => 'nullable|string|max:100',
-
-                'quantite' => 'nullable|integer|min:1',
-
-                'observation_materiel' => 'nullable|string',
-
-            ]);
-
-            if ($validator->fails()) {
-
-                return response()->json([
-
-                    'success' => false,
-
-                    'message' => $validator->errors()->first(),
-
-                ], 422);
-
-            }
-
-            DB::beginTransaction();
-
-            $materiel = Materiel::create([
-
-                'code_materiel' => $request->categorie === 'ACCESSOIRE'
-                    ? 'ACC-'.strtoupper(Str::random(8))
-                    : 'MAT-'.strtoupper(Str::random(8)),
-
-                'acquisition_id' => $request->acquisition_id,
-
-                'categorie' => $request->categorie,
-
-                'numero_serie' => $request->numero_serie,
-
-                'marque' => $request->marque,
-
-                'modele' => $request->modele,
-
-                'type_materiel' => $request->type_materiel,
-
-                'quantite' => $request->quantite ?? 1,
-
-                'etat' => 'disponible',
-
-                'statut_enregistrement' => 'BROUILLON',
-
-                'observation' => $request->observation_materiel,
-
-                'date_etat_change' => now(),
-
-                'motif_etat' => 'BROUILLON',
-
-            ]);
-
-            $this->verifierStatutAcquisition(
-                $request->acquisition_id
-            );
-
-            DB::commit();
-
-            $this->verifierStatutAcquisition(
-                $request->acquisition_id
-            );
-
+        if ($validator->fails()) {
             return response()->json([
-
-                'success' => true,
-
-                'message' => 'Matériel enregistré en brouillon.',
-
-                'data' => $materiel,
-
-            ], 201);
-
-        } catch (\Throwable $e) {
-
-            DB::rollBack();
-
-            return response()->json([
-
                 'success' => false,
-
-                'message' => 'Erreur sauvegarde brouillon.',
-
-                'error' => $e->getMessage(),
-
-            ], 500);
-
+                'message' => $validator->errors()->first(),
+            ], 422);
         }
+
+        DB::beginTransaction();
+
+        // ✅ Vérifier si l'acquisition existe
+        $acquisition = Acquisition::find($request->acquisition_id);
+        if (!$acquisition) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Acquisition non trouvée.',
+            ], 404);
+        }
+
+        // ✅ Créer le brouillon
+        $materiel = Materiel::create([
+            'code_materiel' => $request->categorie === 'ACCESSOIRE'
+                ? 'ACC-' . strtoupper(Str::random(8))
+                : 'MAT-' . strtoupper(Str::random(8)),
+            'acquisition_id' => $request->acquisition_id,
+            'categorie' => $request->categorie,
+            'numero_serie' => $request->numero_serie,
+            'marque' => $request->marque,
+            'modele' => $request->modele,
+            'type_materiel' => $request->type_materiel,
+            'quantite' => $request->quantite ?? 1,
+            'etat' => 'disponible',
+            'statut_enregistrement' => 'BROUILLON',
+            'observation' => $request->observation_materiel,
+            'date_etat_change' => now(),
+            'motif_etat' => 'BROUILLON',
+        ]);
+
+        // ✅ Mettre à jour le statut de l'acquisition (une seule fois)
+        $this->verifierStatutAcquisition($request->acquisition_id);
+
+        DB::commit();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Matériel enregistré en brouillon.',
+            'data' => $materiel,
+        ], 201);
+
+    } catch (\Throwable $e) {
+        DB::rollBack();
+
+        // \Log::error('Erreur sauvegarde brouillon', [
+        //     'message' => $e->getMessage(),
+        //     'trace' => $e->getTraceAsString(),
+        //     'request' => $request->all()
+        // ]);
+
+        return response()->json([
+            'success' => false,
+            'message' => 'Erreur sauvegarde brouillon.',
+            'error' => $e->getMessage(),
+        ], 500);
     }
+}
 
     public function ValiderMateriel(Request $request, $id)
     {
@@ -1421,150 +1395,150 @@ class MaterielController extends Controller
     }
 
     public function deleteMateriel($id)
-{
-    if (! is_numeric($id)) {
-        return response()->json([
-            'success' => false,
-            'message' => 'Identifiant invalide.',
-        ], 400);
+    {
+        if (! is_numeric($id)) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Identifiant invalide.',
+            ], 400);
+        }
+
+        try {
+            DB::beginTransaction();
+
+            /*
+            |--------------------------------------------------------------------------
+            | 1. Récupérer et verrouiller le matériel
+            |--------------------------------------------------------------------------
+            */
+
+            $materiel = Materiel::query()
+                ->lockForUpdate()
+                ->find($id);
+
+            if (! $materiel) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Matériel introuvable.',
+                ], 404);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | 2. Autoriser uniquement la suppression d'un matériel au rebut
+            |--------------------------------------------------------------------------
+            */
+
+            if ($materiel->etat !== 'rebut') {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Suppression impossible. Le matériel doit d’abord être mis au rebut.',
+                    'data' => [
+                        'materiel_id' => $materiel->id,
+                        'code_materiel' => $materiel->code_materiel,
+                        'etat_actuel' => $materiel->etat,
+                    ],
+                ], 409);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | 3. Vérifier qu'il n'existe aucune attribution encore active
+            |--------------------------------------------------------------------------
+            */
+
+            $hasActiveAttribution = Attribution::query()
+                ->where('materiel_id', $materiel->id)
+                ->where(function ($query) {
+                    $query->whereNull('date_fin')
+                        ->orWhereIn('statut', [
+                            'ACTIVE',
+                            'EN_PANNE',
+                            'EN_MAINTENANCE',
+                        ]);
+                })
+                ->exists();
+
+            if ($hasActiveAttribution) {
+                DB::rollBack();
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Suppression impossible. Une attribution liée à ce matériel est encore active.',
+                ], 409);
+            }
+
+            /*
+            |--------------------------------------------------------------------------
+            | 4. Supprimer les mouvements liés
+            |--------------------------------------------------------------------------
+            |
+            | Cette suppression est facultative si la clé étrangère utilise
+            | cascadeOnDelete(), mais elle reste explicite ici.
+            |
+            */
+
+            MouvementMateriel::query()
+                ->where('materiel_id', $materiel->id)
+                ->delete();
+
+            /*
+            |--------------------------------------------------------------------------
+            | 5. Supprimer les anciennes attributions
+            |--------------------------------------------------------------------------
+            |
+            | La table attributions utilise cascadeOnDelete() sur materiel_id.
+            | Laravel/PostgreSQL peut donc les supprimer automatiquement avec le
+            | matériel. Cette suppression explicite n'est pas obligatoire.
+            |
+            */
+
+            Attribution::query()
+                ->where('materiel_id', $materiel->id)
+                ->delete();
+
+            /*
+            |--------------------------------------------------------------------------
+            | 6. Supprimer le matériel
+            |--------------------------------------------------------------------------
+            */
+
+            $codeMateriel = $materiel->code_materiel;
+
+            $materiel->delete();
+
+            /*
+            |--------------------------------------------------------------------------
+            | Important : ne pas supprimer l'acquisition
+            |--------------------------------------------------------------------------
+            |
+            | Une acquisition peut être associée à plusieurs matériels.
+            |
+            */
+
+            DB::commit();
+
+            return response()->json([
+                'success' => true,
+                'message' => "Le matériel {$codeMateriel} a été supprimé avec succès.",
+            ]);
+
+        } catch (\Throwable $e) {
+            DB::rollBack();
+
+            report($e);
+
+            return response()->json([
+                'success' => false,
+                'message' => 'Erreur lors de la suppression du matériel.',
+                'error' => config('app.debug') ? $e->getMessage() : null,
+            ], 500);
+        }
     }
-
-    try {
-        DB::beginTransaction();
-
-        /*
-        |--------------------------------------------------------------------------
-        | 1. Récupérer et verrouiller le matériel
-        |--------------------------------------------------------------------------
-        */
-
-        $materiel = Materiel::query()
-            ->lockForUpdate()
-            ->find($id);
-
-        if (! $materiel) {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Matériel introuvable.',
-            ], 404);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 2. Autoriser uniquement la suppression d'un matériel au rebut
-        |--------------------------------------------------------------------------
-        */
-
-        if ($materiel->etat !== 'rebut') {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Suppression impossible. Le matériel doit d’abord être mis au rebut.',
-                'data' => [
-                    'materiel_id' => $materiel->id,
-                    'code_materiel' => $materiel->code_materiel,
-                    'etat_actuel' => $materiel->etat,
-                ],
-            ], 409);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 3. Vérifier qu'il n'existe aucune attribution encore active
-        |--------------------------------------------------------------------------
-        */
-
-        $hasActiveAttribution = Attribution::query()
-            ->where('materiel_id', $materiel->id)
-            ->where(function ($query) {
-                $query->whereNull('date_fin')
-                    ->orWhereIn('statut', [
-                        'ACTIVE',
-                        'EN_PANNE',
-                        'EN_MAINTENANCE',
-                    ]);
-            })
-            ->exists();
-
-        if ($hasActiveAttribution) {
-            DB::rollBack();
-
-            return response()->json([
-                'success' => false,
-                'message' => 'Suppression impossible. Une attribution liée à ce matériel est encore active.',
-            ], 409);
-        }
-
-        /*
-        |--------------------------------------------------------------------------
-        | 4. Supprimer les mouvements liés
-        |--------------------------------------------------------------------------
-        |
-        | Cette suppression est facultative si la clé étrangère utilise
-        | cascadeOnDelete(), mais elle reste explicite ici.
-        |
-        */
-
-        MouvementMateriel::query()
-            ->where('materiel_id', $materiel->id)
-            ->delete();
-
-        /*
-        |--------------------------------------------------------------------------
-        | 5. Supprimer les anciennes attributions
-        |--------------------------------------------------------------------------
-        |
-        | La table attributions utilise cascadeOnDelete() sur materiel_id.
-        | Laravel/PostgreSQL peut donc les supprimer automatiquement avec le
-        | matériel. Cette suppression explicite n'est pas obligatoire.
-        |
-        */
-
-        Attribution::query()
-            ->where('materiel_id', $materiel->id)
-            ->delete();
-
-        /*
-        |--------------------------------------------------------------------------
-        | 6. Supprimer le matériel
-        |--------------------------------------------------------------------------
-        */
-
-        $codeMateriel = $materiel->code_materiel;
-
-        $materiel->delete();
-
-        /*
-        |--------------------------------------------------------------------------
-        | Important : ne pas supprimer l'acquisition
-        |--------------------------------------------------------------------------
-        |
-        | Une acquisition peut être associée à plusieurs matériels.
-        |
-        */
-
-        DB::commit();
-
-        return response()->json([
-            'success' => true,
-            'message' => "Le matériel {$codeMateriel} a été supprimé avec succès.",
-        ]);
-
-    } catch (\Throwable $e) {
-        DB::rollBack();
-
-        report($e);
-
-        return response()->json([
-            'success' => false,
-            'message' => 'Erreur lors de la suppression du matériel.',
-            'error' => config('app.debug') ? $e->getMessage() : null,
-        ], 500);
-    }
-}
 
     /**
      * Récupérer les statistiques des matériels
